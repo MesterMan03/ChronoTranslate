@@ -27,7 +27,28 @@ export function EditorPanel({ translationKey: k, project, locale, onClose }: Pro
   const { user } = useAuthStore();
   const queryClient = useQueryClient();
 
-  const [draft, setDraft] = useState(k.translation?.value ?? "");
+  const draftKey = locale ? `draft:${k.id}:${locale}` : null;
+
+  // Prefer localStorage draft, then approved translation, then empty
+  const [draft, setDraft] = useState(() => {
+    if (!draftKey) return k.translation?.value ?? "";
+    return localStorage.getItem(draftKey) ?? k.translation?.value ?? "";
+  });
+
+  // Reload draft when the key or locale changes (panel stays mounted across navigation)
+  useEffect(() => {
+    if (!draftKey) {
+      setDraft(k.translation?.value ?? "");
+      return;
+    }
+    setDraft(localStorage.getItem(draftKey) ?? k.translation?.value ?? "");
+  }, [k.id, locale]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist draft to localStorage on every change
+  useEffect(() => {
+    if (!draftKey) return;
+    localStorage.setItem(draftKey, draft);
+  }, [draftKey, draft]);
 
   const canReview = user && (user.role === "reviewer" || user.role === "admin" || user.role === "superadmin");
 
@@ -43,6 +64,9 @@ export function EditorPanel({ translationKey: k, project, locale, onClose }: Pro
     mutationFn: (value: string) =>
       api.submitTranslation(project.id, k.id, locale, value),
     onSuccess: () => {
+      // Clear the saved draft — it's now tracked as a suggestion
+      if (draftKey) localStorage.removeItem(draftKey);
+      setDraft("");
       queryClient.invalidateQueries({ queryKey: ["keys"] });
       queryClient.invalidateQueries({ queryKey: ["suggestions", k.id, locale] });
     },
@@ -89,7 +113,7 @@ export function EditorPanel({ translationKey: k, project, locale, onClose }: Pro
                 <MiniMessagePreview
                   key={i}
                   value={line}
-                  themeColors={project.themeColors}
+    
                   customTags={project.customTags}
                   mockArgs={mocks}
                 />
@@ -98,7 +122,7 @@ export function EditorPanel({ translationKey: k, project, locale, onClose }: Pro
           ) : (
             <MiniMessagePreview
               value={k.sourceValue}
-              themeColors={project.themeColors}
+
               customTags={project.customTags}
               mockArgs={mocks}
             />
@@ -151,7 +175,7 @@ export function EditorPanel({ translationKey: k, project, locale, onClose }: Pro
                           <MiniMessagePreview
                             key={i}
                             value={line}
-                            themeColors={project.themeColors}
+              
                             customTags={project.customTags}
                             mockArgs={mocks}
                           />
@@ -160,7 +184,7 @@ export function EditorPanel({ translationKey: k, project, locale, onClose }: Pro
                     ) : (
                       <MiniMessagePreview
                         value={draft}
-                        themeColors={project.themeColors}
+          
                         customTags={project.customTags}
                         mockArgs={mocks}
                       />
@@ -351,7 +375,6 @@ function SuggestionCard({
         <div className="border-t border-white/5 px-3 py-2 space-y-2">
           <MiniMessagePreview
             value={s.value}
-            themeColors={project.themeColors}
             customTags={project.customTags}
             mockArgs={mocks}
           />

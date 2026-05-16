@@ -31,9 +31,8 @@ export const users = pgTable("users", {
 });
 
 export type CustomTag = {
-  name: string;    // tag name, e.g. "party_prefix"
-  display: string; // text shown in preview, e.g. "[Party] "
-  color: string;   // hex color, e.g. "#5865F2"
+  name: string;
+  miniMessage: string;
 };
 
 export const projects = pgTable("projects", {
@@ -45,17 +44,6 @@ export const projects = pgTable("projects", {
     mode: "number",
   }),
   sourceLocale: text("source_locale").notNull().default("en"),
-  themeColors: jsonb("theme_colors")
-    .notNull()
-    .$type<Record<string, string>>()
-    .default({
-      primary: "#0898FC",
-      secondary: "#C3B38B",
-      highlight: "#55FFFF",
-      text_color: "#AAAAAA",
-      error_color: "#FF5555",
-      dark_color: "#555555",
-    }),
   customTags: jsonb("custom_tags")
     .notNull()
     .$type<CustomTag[]>()

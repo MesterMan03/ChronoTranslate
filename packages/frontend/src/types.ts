@@ -11,15 +11,13 @@ export type User = {
 
 export type CustomTag = {
   name: string;
-  display: string;
-  color: string;
+  miniMessage: string;
 };
 
 export type Project = {
   id: string;
   name: string;
   sourceLocale: string;
-  themeColors: Record<string, string>;
   customTags: CustomTag[];
   githubOwner: string | null;
   githubRepo: string | null;

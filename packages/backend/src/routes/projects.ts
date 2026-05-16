@@ -41,7 +41,6 @@ export async function projectRoutes(app: FastifyInstance) {
       name: string;
       githubOwner?: string;
       githubRepo?: string;
-      themeColors?: Record<string, string>;
     };
   }>("/projects", async (req, reply) => {
     await requireRole(req, reply, "admin");

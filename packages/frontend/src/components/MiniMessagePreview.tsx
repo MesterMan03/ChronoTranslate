@@ -2,7 +2,6 @@ import { renderToHTML, type CustomTag } from "../lib/minimessage.ts";
 
 type Props = {
   value: string;
-  themeColors?: Record<string, string>;
   mockArgs?: Record<string, string>;
   customTags?: CustomTag[];
   className?: string;
@@ -10,12 +9,11 @@ type Props = {
 
 export function MiniMessagePreview({
   value,
-  themeColors = {},
   mockArgs = {},
   customTags = [],
   className = "",
 }: Props) {
-  const html = renderToHTML(value, themeColors, mockArgs, customTags);
+  const html = renderToHTML(value, mockArgs, customTags);
 
   return (
     <div

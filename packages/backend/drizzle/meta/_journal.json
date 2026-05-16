@@ -22,6 +22,13 @@
       "when": 1778906867443,
       "tag": "0002_suggestions_threading_customtags",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1747389600000,
+      "tag": "0003_tags_rework",
+      "breakpoints": true
     }
   ]
 }

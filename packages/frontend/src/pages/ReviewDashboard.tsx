@@ -2,8 +2,9 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, type PendingItem } from "../api.ts";
 import { MiniMessagePreview } from "../components/MiniMessagePreview.tsx";
+import { MockArgEditor } from "../components/MockArgEditor.tsx";
 import { RawValue } from "../components/RawValue.tsx";
-import { useAuthStore } from "../store.ts";
+import { useAuthStore, useMockStore } from "../store.ts";
 import { Link } from "react-router";
 
 const PAGE_SIZE = 50;
@@ -153,6 +154,8 @@ function PendingCard({
   busy: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const { getMocks } = useMockStore();
+  const mocks = getMocks(item.keyId);
 
   return (
     <div className="bg-white/5 border border-white/10 rounded-lg overflow-hidden">
@@ -190,32 +193,40 @@ function PendingCard({
 
       {/* Expanded detail */}
       {expanded && (
-        <div className="border-t border-white/10 px-4 py-3 grid grid-cols-2 gap-4 text-sm">
-          <div>
-            <div className="text-xs text-white/30 mb-1 uppercase tracking-wider">
-              Source ({item.filePath})
+        <div className="border-t border-white/10 px-4 py-3 space-y-3 text-sm">
+          {item.detectedArgs.length > 0 && (
+            <div>
+              <div className="text-xs text-white/30 mb-1 uppercase tracking-wider">Mock arguments</div>
+              <MockArgEditor keyId={item.keyId} args={item.detectedArgs} />
             </div>
-            {item.isArray ? (
-              item.sourceValue.split("\n").map((line, i) => (
-                <MiniMessagePreview key={i} value={line} themeColors={item.themeColors} customTags={item.customTags} mockArgs={{}} />
-              ))
-            ) : (
-              <MiniMessagePreview value={item.sourceValue} themeColors={item.themeColors} customTags={item.customTags} mockArgs={{}} />
-            )}
-            <RawValue value={item.sourceValue} />
-          </div>
-          <div>
-            <div className="text-xs text-white/30 mb-1 uppercase tracking-wider">
-              Translation ({item.localeCode})
+          )}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <div className="text-xs text-white/30 mb-1 uppercase tracking-wider">
+                Source ({item.filePath})
+              </div>
+              {item.isArray ? (
+                item.sourceValue.split("\n").map((line, i) => (
+                  <MiniMessagePreview key={i} value={line} customTags={item.customTags} mockArgs={mocks} />
+                ))
+              ) : (
+                <MiniMessagePreview value={item.sourceValue} customTags={item.customTags} mockArgs={mocks} />
+              )}
+              <RawValue value={item.sourceValue} />
             </div>
-            {item.isArray ? (
-              item.value.split("\n").map((line, i) => (
-                <MiniMessagePreview key={i} value={line} themeColors={item.themeColors} customTags={item.customTags} mockArgs={{}} />
-              ))
-            ) : (
-              <MiniMessagePreview value={item.value} themeColors={item.themeColors} customTags={item.customTags} mockArgs={{}} />
-            )}
-            <RawValue value={item.value} />
+            <div>
+              <div className="text-xs text-white/30 mb-1 uppercase tracking-wider">
+                Translation ({item.localeCode})
+              </div>
+              {item.isArray ? (
+                item.value.split("\n").map((line, i) => (
+                  <MiniMessagePreview key={i} value={line} customTags={item.customTags} mockArgs={mocks} />
+                ))
+              ) : (
+                <MiniMessagePreview value={item.value} customTags={item.customTags} mockArgs={mocks} />
+              )}
+              <RawValue value={item.value} />
+            </div>
           </div>
         </div>
       )}

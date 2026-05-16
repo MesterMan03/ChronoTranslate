@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api.ts";
 import { useAuthStore } from "../store.ts";
 import type { Role, User, CustomTag } from "../types.ts";
+import { MiniMessagePreview } from "../components/MiniMessagePreview.tsx";
 
 const ROLE_ORDER: Role[] = ["translator", "reviewer", "admin", "superadmin"];
 
@@ -454,8 +455,8 @@ function CustomTagsEditor({
 }) {
   const [tags, setTags] = useState<CustomTag[]>(initialTags);
   const [newName, setNewName] = useState("");
-  const [newDisplay, setNewDisplay] = useState("");
-  const [newColor, setNewColor] = useState("#5865F2");
+  const [newMiniMessage, setNewMiniMessage] = useState("");
+  const [editingName, setEditingName] = useState<string | null>(null);
 
   const saveMutation = useMutation({
     mutationFn: () => api.updateProjectTags(projectId, tags),
@@ -463,66 +464,118 @@ function CustomTagsEditor({
   });
 
   const addTag = () => {
-    if (!newName.trim() || !newDisplay.trim()) return;
+    if (!newName.trim()) return;
     setTags((prev) => [
       ...prev.filter((t) => t.name !== newName.trim()),
-      { name: newName.trim(), display: newDisplay, color: newColor },
+      { name: newName.trim(), miniMessage: newMiniMessage },
     ]);
     setNewName("");
-    setNewDisplay("");
-    setNewColor("#5865F2");
+    setNewMiniMessage("");
   };
 
   return (
     <div className="mt-3 border-t border-white/10 pt-3">
-      <div className="text-xs text-white/40 mb-2 uppercase tracking-wider">Custom tags</div>
+      <div className="text-xs text-white/40 mb-2 uppercase tracking-wider">
+        Custom tags
+        <span className="ml-2 normal-case text-white/20 font-normal">
+          — define what &lt;tagname&gt; expands to as MiniMessage
+        </span>
+      </div>
+
       {tags.length > 0 && (
-        <div className="space-y-1 mb-3">
+        <div className="space-y-2 mb-3">
           {tags.map((t) => (
-            <div key={t.name} className="flex items-center gap-2 bg-white/5 rounded px-3 py-1.5">
-              <code className="text-xs text-white/60 w-36 shrink-0">&lt;{t.name}&gt;</code>
-              <span className="text-sm" style={{ color: t.color }}>{t.display}</span>
-              <input
-                type="color"
-                value={t.color}
-                onChange={(e) =>
-                  setTags((prev) => prev.map((x) => x.name === t.name ? { ...x, color: e.target.value } : x))
-                }
-                className="w-6 h-6 rounded cursor-pointer bg-transparent border-0 ml-auto"
-                title="Change color"
-              />
-              <button
-                onClick={() => setTags((prev) => prev.filter((x) => x.name !== t.name))}
-                className="text-white/20 hover:text-red-400 text-sm"
-              >×</button>
+            <div key={t.name} className="bg-white/5 border border-white/10 rounded overflow-hidden">
+              <div className="flex items-center gap-2 px-3 py-2">
+                <code className="text-xs text-white/60 w-36 shrink-0 font-mono">&lt;{t.name}&gt;</code>
+                <div className="flex-1 min-w-0">
+                  {editingName === t.name ? (
+                    <input
+                      value={t.miniMessage}
+                      autoFocus
+                      onChange={(e) =>
+                        setTags((prev) =>
+                          prev.map((x) => x.name === t.name ? { ...x, miniMessage: e.target.value } : x)
+                        )
+                      }
+                      onBlur={() => setEditingName(null)}
+                      placeholder="<gold>[Party] </gold>"
+                      className="w-full bg-transparent border-b border-white/20 text-xs font-mono focus:outline-none focus:border-blue-400 py-0.5"
+                    />
+                  ) : (
+                    <button
+                      onClick={() => setEditingName(t.name)}
+                      className="text-xs font-mono text-white/40 hover:text-white/70 text-left truncate w-full"
+                      title="Click to edit"
+                    >
+                      {t.miniMessage || <span className="italic text-white/20">empty</span>}
+                    </button>
+                  )}
+                </div>
+                <button
+                  onClick={() => setTags((prev) => prev.filter((x) => x.name !== t.name))}
+                  className="text-white/20 hover:text-red-400 text-sm shrink-0 ml-1"
+                >
+                  ×
+                </button>
+              </div>
+              {t.miniMessage && (
+                <div className="border-t border-white/5 px-3 py-1.5">
+                  <div className="text-xs text-white/20 mb-1">Preview</div>
+                  <MiniMessagePreview value={t.miniMessage} className="text-xs py-1" />
+                </div>
+              )}
             </div>
           ))}
         </div>
       )}
-      <div className="flex items-end gap-2 mb-3 flex-wrap">
-        <div>
-          <label className="text-xs text-white/30 block mb-1">Tag name</label>
-          <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="party_prefix"
-            className="w-32 bg-white/5 border border-white/10 rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-blue-500" />
+
+      <div className="bg-white/5 border border-white/10 rounded p-3 mb-3">
+        <div className="text-xs text-white/30 mb-2">Add tag</div>
+        <div className="flex gap-2 mb-2">
+          <div>
+            <label className="text-xs text-white/20 block mb-1">Tag name</label>
+            <input
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="primary"
+              className="w-32 bg-white/5 border border-white/10 rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-blue-500"
+            />
+          </div>
+          <div className="flex-1">
+            <label className="text-xs text-white/20 block mb-1">MiniMessage replacement</label>
+            <input
+              value={newMiniMessage}
+              onChange={(e) => setNewMiniMessage(e.target.value)}
+              placeholder="<color:#5865F2>"
+              className="w-full bg-white/5 border border-white/10 rounded px-2 py-1 text-xs font-mono focus:outline-none focus:border-blue-500"
+            />
+          </div>
+          <button
+            onClick={addTag}
+            disabled={!newName.trim()}
+            className="text-xs bg-white/10 hover:bg-white/15 disabled:opacity-40 px-3 py-1 rounded self-end"
+          >
+            Add
+          </button>
         </div>
-        <div>
-          <label className="text-xs text-white/30 block mb-1">Display text</label>
-          <input value={newDisplay} onChange={(e) => setNewDisplay(e.target.value)} placeholder="[Party] "
-            className="w-28 bg-white/5 border border-white/10 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500" />
-        </div>
-        <div>
-          <label className="text-xs text-white/30 block mb-1">Color</label>
-          <input type="color" value={newColor} onChange={(e) => setNewColor(e.target.value)}
-            className="h-7 w-10 rounded cursor-pointer bg-transparent border border-white/10" />
-        </div>
-        <button onClick={addTag} disabled={!newName.trim() || !newDisplay.trim()}
-          className="text-xs bg-white/10 hover:bg-white/15 disabled:opacity-40 px-3 py-1.5 rounded self-end">
-          Add
-        </button>
+        {newMiniMessage && (
+          <div>
+            <div className="text-xs text-white/20 mb-1">Preview</div>
+            <MiniMessagePreview value={newMiniMessage} className="text-xs py-1" />
+          </div>
+        )}
+        <p className="text-xs text-white/20 mt-2">
+          Wrapping tags: use <code className="font-mono">&lt;color:#hex&gt;</code> — the closing &lt;/tagname&gt; maps to &lt;/color&gt;. Self-contained: include all formatting inline, e.g. <code className="font-mono">&lt;gold&gt;[Party] &lt;/gold&gt;</code>.
+        </p>
       </div>
+
       <div className="flex gap-2">
-        <button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}
-          className="text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-40 px-4 py-1.5 rounded">
+        <button
+          onClick={() => saveMutation.mutate()}
+          disabled={saveMutation.isPending}
+          className="text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-40 px-4 py-1.5 rounded"
+        >
           {saveMutation.isPending ? "Saving…" : "Save tags"}
         </button>
         <button onClick={onClose} className="text-sm bg-white/5 hover:bg-white/10 px-4 py-1.5 rounded">

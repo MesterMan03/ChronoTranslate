@@ -2,8 +2,7 @@ import { MiniMessage } from "minimessage-js";
 
 export type CustomTag = {
   name: string;
-  display: string;
-  color: string;
+  miniMessage: string;
 };
 
 // Tags that the library handles natively — do not intercept these
@@ -31,17 +30,6 @@ const STANDARD_TAGS = new Set([
   "shadow_color", "shadow_colour",
 ]);
 
-// Built-in ChronoCore prefix tags rendered as colored text if not admin-overridden
-const BUILTIN_PREFIX_TAGS: [string, string][] = [
-  ["auction_prefix", "[Auction] "],
-  ["party_prefix", "[Party] "],
-  ["chat_prefix", "[Chat] "],
-  ["guild_prefix", "[Guild] "],
-  ["special_prefix", ""],
-  ["base_prefix", ""],
-  ["type_rarity", "[Rarity] "],
-];
-
 // Singleton — lenient mode, standard tags, no custom preprocessing
 const mm = MiniMessage.miniMessage();
 
@@ -52,17 +40,29 @@ const mm = MiniMessage.miniMessage();
  */
 export function preprocessForPreview(
   input: string,
-  themeColors: Record<string, string> = {},
   mockArgs: Record<string, string> = {},
   customTags: CustomTag[] = []
 ): string {
   let text = input;
 
-  // 1. {{name}} brace substitution — direct string replacement
+  // 1a. {{name}} → mock value (known mocks only)
   for (const [name, val] of Object.entries(mockArgs)) {
     text = text.replaceAll(`{{${name}}}`, val);
   }
-  // Remaining {{name}} shown as blue placeholder
+
+  // 1b. <progress:cur:max> — processed here while unknown {{}} are still raw literals.
+  //     parseFloat("{{name}}") = NaN → defaults to 1 (fully-filled bar).
+  //     (Moved ahead of the blue-placeholder pass to prevent regex confusion.)
+  text = text.replace(/<progress:([^:>]+):([^>]+)>/g, (_, cur, max) => {
+    const curNum = parseFloat(cur);
+    const maxNum = parseFloat(max);
+    const effectiveCur = isNaN(curNum) ? 1 : curNum;
+    const effectiveMax = isNaN(maxNum) || maxNum <= 0 ? 1 : maxNum;
+    const filled = effectiveMax < effectiveCur ? 10 : Math.round((effectiveCur / effectiveMax) * 10);
+    return "▓".repeat(filled) + "░".repeat(10 - filled);
+  });
+
+  // 1c. Remaining {{name}} → blue placeholder
   text = text.replace(/\{\{([^}]+)\}\}/g, "<color:#aaaaff>[$1]</color>");
 
   // 2. <argName> tag substitution for mock values (before any other tag processing)
@@ -72,68 +72,32 @@ export function preprocessForPreview(
     text = text.replaceAll(`</${name}>`, "");
   }
 
-  // 3. Theme color tags: <primary> → <color:#hex>  </primary> → </color>
-  for (const [name, hex] of Object.entries(themeColors)) {
-    if (STANDARD_TAGS.has(name)) continue;
-    text = text.replaceAll(`<${name}>`, `<color:${hex}>`);
-    text = text.replaceAll(`</${name}>`, `</color>`);
-    text = text.replaceAll(`<${name}/>`, "");
-  }
-
-  // 4. Admin-defined custom tags: <party_prefix> → <color:#hex>display</color>
+  // 3. Admin-defined custom tags: <name> → miniMessage value, </name> → </color>
+  //    The </color> close works for color-wrapping tags; for self-contained tags it's harmless.
   for (const ct of customTags) {
-    text = text.replaceAll(`<${ct.name}>`, `<color:${ct.color}>${ct.display}</color>`);
-    text = text.replaceAll(`</${ct.name}>`, "");
-    text = text.replaceAll(`<${ct.name}/>`, "");
+    text = text.replaceAll(`<${ct.name}>`, ct.miniMessage);
+    text = text.replaceAll(`</${ct.name}>`, "</color>");
+    text = text.replaceAll(`<${ct.name}/>`, ct.miniMessage);
   }
 
-  // 5. Built-in prefix tag fallbacks (only if not already covered by theme/custom/mock)
-  const handled = new Set([
-    ...Object.keys(themeColors),
-    ...customTags.map((ct) => ct.name),
-    ...Object.keys(mockArgs).filter((k) => !k.includes(":")),
-  ]);
-  const primaryColor = themeColors.primary ?? "#5865F2";
-  for (const [name, display] of BUILTIN_PREFIX_TAGS) {
-    if (handled.has(name)) continue;
-    text = text.replaceAll(
-      `<${name}>`,
-      display ? `<color:${primaryColor}>${display}</color>` : ""
-    );
-    text = text.replaceAll(`</${name}>`, "");
-    text = text.replaceAll(`<${name}/>`, "");
-  }
-
-  // 6. <papi:placeholder> — PlaceholderAPI values (server-side only, show mock or label)
+  // 4. <papi:placeholder> — PlaceholderAPI values (server-side only, show mock or label)
   text = text.replace(/<papi:([^>]+)>/g, (_, placeholder) => {
     const mockVal = mockArgs[`papi:${placeholder}`];
     return mockVal ? mockVal : `<color:#aaaaff>{${placeholder}}</color>`;
   });
 
-  // 7. <progress:cur:max> — render as ASCII progress bar
-  text = text.replace(/<progress:([^:>]+):([^>]+)>/g, (_, cur, max) => {
-    const curNum = parseFloat(cur);
-    const maxNum = parseFloat(max);
-    if (!isNaN(curNum) && !isNaN(maxNum) && maxNum > 0) {
-      const filled = Math.round((curNum / maxNum) * 10);
-      return "▓".repeat(filled) + "░".repeat(10 - filled);
-    }
-    return `<color:#aaaaff>[${cur}/${max}]</color>`;
-  });
-
-  // 8. <statchar:stat> — stat icon placeholder
+  // 5. <statchar:stat> — stat icon placeholder
   text = text.replace(
     /<statchar:([^>]+)>/g,
     (_, stat) => `<color:#99aaff>[${stat}]</color>`
   );
 
-  // 9. Any remaining unknown open tags — the library silently drops them in lenient
-  //    mode, which would make arg placeholders invisible. Show them as amber labels.
+  // 7. Any remaining unknown open tags — show as amber labels so they're visible
   text = text.replace(/<([a-zA-Z_][a-zA-Z0-9_]*)(?::[^>]*)?\/?>/g, (match, tagName) => {
     if (STANDARD_TAGS.has(tagName.toLowerCase())) return match;
     return `<color:#ffaa00>[${tagName}]</color>`;
   });
-  // Drop orphaned closing tags for non-standard names (already converted above)
+  // Drop orphaned closing tags for non-standard names
   text = text.replace(/<\/([a-zA-Z_][a-zA-Z0-9_]*)>/g, (match, tagName) => {
     if (STANDARD_TAGS.has(tagName.toLowerCase())) return match;
     return "";
@@ -147,12 +111,11 @@ export function preprocessForPreview(
  */
 export function renderToHTML(
   input: string,
-  themeColors: Record<string, string> = {},
   mockArgs: Record<string, string> = {},
   customTags: CustomTag[] = []
 ): string {
   try {
-    const preprocessed = preprocessForPreview(input, themeColors, mockArgs, customTags);
+    const preprocessed = preprocessForPreview(input, mockArgs, customTags);
     const component = mm.deserialize(preprocessed);
     return mm.toHTML(component);
   } catch {

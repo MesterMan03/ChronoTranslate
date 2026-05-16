@@ -129,7 +129,6 @@ export async function adminRoutes(app: FastifyInstance) {
         filePath: translationFiles.filePath,
         projectId: projects.id,
         projectName: projects.name,
-        themeColors: projects.themeColors,
         customTags: projects.customTags,
         localeId: locales.id,
         localeCode: locales.localeCode,

@@ -56,7 +56,6 @@ export type PendingItem = {
   filePath: string;
   projectId: string;
   projectName: string;
-  themeColors: Record<string, string>;
   customTags: CustomTag[];
   localeId: string;
   localeCode: string;

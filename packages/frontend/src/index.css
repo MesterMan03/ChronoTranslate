@@ -33,3 +33,9 @@ body {
   filter: blur(3px);
   user-select: none;
 }
+
+/* Dark theme for native select dropdowns */
+select option {
+  background-color: #1c2333;
+  color: #c9d1d9;
+}
