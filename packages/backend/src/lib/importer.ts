@@ -202,18 +202,31 @@ async function importExistingTranslations(
 
       if (!keyRecord) continue; // key doesn't exist in source — skip
 
-      await db
-        .insert(translations)
-        .values({
+      const [existing] = await db
+        .select({ id: translations.id })
+        .from(translations)
+        .where(
+          and(
+            eq(translations.keyId, keyRecord.id),
+            eq(translations.localeId, localeId),
+            eq(translations.status, "approved")
+          )
+        )
+        .limit(1);
+
+      if (existing) {
+        await db
+          .update(translations)
+          .set({ value: entry.value })
+          .where(eq(translations.id, existing.id));
+      } else {
+        await db.insert(translations).values({
           keyId: keyRecord.id,
           localeId,
           value: entry.value,
           status: "approved",
-        })
-        .onConflictDoUpdate({
-          target: [translations.keyId, translations.localeId],
-          set: { value: entry.value, status: "approved" },
         });
+      }
 
       translationsImported++;
     }
