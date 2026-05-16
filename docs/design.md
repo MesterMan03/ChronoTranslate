@@ -111,9 +111,10 @@ For preview purposes, theme color tags and prefix tags must resolve to sensible 
 ### 2. User & Permission System
 
 - **Discord OAuth** only — no passwords
-- Three roles: **Translator**, **Reviewer/Moderator**, **Admin**
-- Roles managed in-app by Admins (Discord is identity only, not role source)
-- Translators submit translations; Reviewers approve/reject; Admins manage everything
+- Four roles: **Translator**, **Reviewer/Moderator**, **Admin**, **Superadmin**
+- Roles managed in-app (Discord is identity only, not role source)
+- Translators submit translations; Reviewers approve/reject; Admins manage projects, locales, and users (up to reviewer); Superadmin has full bypass and is the only one who can assign the admin role
+- **Superadmin** is designated by `SUPERADMIN_DISCORD_ID` env var — automatically granted on login, at most one at a time, cannot be managed via API
 
 ### 3. Translation Editor
 
@@ -303,6 +304,17 @@ GET  /projects/:id/export/:locale    → download reconstructed JSON archive
 ---
 
 ## Roadmap
+
+### ✅ Milestone 3 — Moderation & Admin Dashboard
+
+- Reviewer dashboard: queue of all pending translations, filter by project/locale, approve/reject inline
+- Approve/reject endpoints on backend with `reviewedBy`/`reviewedAt` tracking
+- `progressPct` updated automatically on every approve, reject, or resubmit
+- Admin dashboard: user management with role assignment, project management (create, add locale, import), progress bars per locale
+- **Superadmin role**: single designated user via `SUPERADMIN_DISCORD_ID` env var; granted automatically on login; only they can assign admin role; cannot be modified via API; demoted automatically if Discord ID changes
+- Approve/reject buttons in the editor panel for reviewer+ roles (inline, no need to go to review queue)
+
+---
 
 ### ✅ Milestone 1 — Foundation & Read-Only Browser
 

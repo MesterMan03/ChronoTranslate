@@ -5,6 +5,8 @@ import { Navbar } from "./components/Navbar.tsx";
 import { ProjectList } from "./pages/ProjectList.tsx";
 import { ProjectView } from "./pages/ProjectView.tsx";
 import { FileView } from "./pages/FileView.tsx";
+import { ReviewDashboard } from "./pages/ReviewDashboard.tsx";
+import { AdminDashboard } from "./pages/AdminDashboard.tsx";
 import { useAuthStore } from "./store.ts";
 import { api } from "./api.ts";
 
@@ -33,6 +35,8 @@ export default function App() {
               <Route path="/" element={<ProjectList />} />
               <Route path="/projects/:id" element={<ProjectView />} />
               <Route path="/projects/:id/files/:fileId" element={<FileView />} />
+              <Route path="/review" element={<ReviewDashboard />} />
+              <Route path="/admin" element={<AdminDashboard />} />
             </Routes>
           </main>
         </div>

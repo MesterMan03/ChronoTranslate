@@ -19,3 +19,17 @@ body {
   font-size: 0.9rem;
   line-height: 1.6;
 }
+
+/* minimessage-js: prevent click: tags from navigating */
+.mc-preview a {
+  color: inherit;
+  text-decoration: underline dotted;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* minimessage-js: obfuscated text approximation */
+.mc-preview [data-mm-misc="obf"] {
+  filter: blur(3px);
+  user-select: none;
+}

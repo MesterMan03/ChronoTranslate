@@ -1,278 +1,161 @@
-/**
- * MiniMessage parser/renderer for ChronoCore's translation format.
- *
- * Produces an array of styled "spans" that the React component renders.
- * Supports: named colors, hex colors, decorations, gradients, rainbow,
- * click/hover (visual only), custom theme tags, papi, progress, newline,
- * and argument substitution.
- */
+import { MiniMessage } from "minimessage-js";
 
-export type Span =
-  | { type: "text"; text: string; style: Style }
-  | { type: "newline" }
-  | { type: "progress"; current: string; max: string; style: Style };
-
-export type Style = {
-  color?: string;
-  bold?: boolean;
-  italic?: boolean;
-  underlined?: boolean;
-  strikethrough?: boolean;
-  obfuscated?: boolean;
-  clickUrl?: string;
-  hoverText?: string;
-  gradient?: string[];
+export type CustomTag = {
+  name: string;
+  display: string;
+  color: string;
 };
 
-const NAMED_COLORS: Record<string, string> = {
-  black: "#000000",
-  dark_blue: "#0000AA",
-  dark_green: "#00AA00",
-  dark_aqua: "#00AAAA",
-  dark_red: "#AA0000",
-  dark_purple: "#AA00AA",
-  gold: "#FFAA00",
-  gray: "#AAAAAA",
-  dark_gray: "#555555",
-  blue: "#5555FF",
-  green: "#55FF55",
-  aqua: "#55FFFF",
-  red: "#FF5555",
-  light_purple: "#FF55FF",
-  yellow: "#FFFF55",
-  white: "#FFFFFF",
-};
-
-const DECORATIONS = new Set([
-  "bold", "b", "italic", "i", "underlined", "u",
-  "strikethrough", "st", "obfuscated", "obf",
+// Tags that the library handles natively — do not intercept these
+const STANDARD_TAGS = new Set([
+  // Named colors
+  "black", "dark_blue", "dark_green", "dark_aqua", "dark_red", "dark_purple",
+  "gold", "gray", "dark_gray", "blue", "green", "aqua", "red", "light_purple",
+  "yellow", "white",
+  // Decorations
+  "bold", "b", "italic", "i", "underlined", "u", "strikethrough", "st",
+  "obfuscated", "obf",
+  // Layout / reset
+  "reset", "newline", "br",
+  // Effects
+  "rainbow", "gradient", "transition",
+  // Events
+  "click", "hover", "insertion",
+  // Color shorthand
+  "color", "colour", "c",
+  // Misc
+  "font", "lang", "translate", "translatable", "tr",
+  "selector", "score", "nbt",
+  "keybind", "key",
+  "head", "sprite", "pride",
+  "shadow_color", "shadow_colour",
 ]);
 
-function decKey(tag: string): keyof Style {
-  switch (tag) {
-    case "bold": case "b": return "bold";
-    case "italic": case "i": return "italic";
-    case "underlined": case "u": return "underlined";
-    case "strikethrough": case "st": return "strikethrough";
-    case "obfuscated": case "obf": return "obfuscated";
-    default: return "bold";
-  }
-}
+// Built-in ChronoCore prefix tags rendered as colored text if not admin-overridden
+const BUILTIN_PREFIX_TAGS: [string, string][] = [
+  ["auction_prefix", "[Auction] "],
+  ["party_prefix", "[Party] "],
+  ["chat_prefix", "[Chat] "],
+  ["guild_prefix", "[Guild] "],
+  ["special_prefix", ""],
+  ["base_prefix", ""],
+  ["type_rarity", "[Rarity] "],
+];
 
-type Token =
-  | { kind: "text"; value: string }
-  | { kind: "open"; tag: string; args: string[] }
-  | { kind: "close"; tag: string }
-  | { kind: "selfclose"; tag: string; args: string[] };
+// Singleton — lenient mode, standard tags, no custom preprocessing
+const mm = MiniMessage.miniMessage();
 
-function tokenize(input: string): Token[] {
-  const tokens: Token[] = [];
-  let i = 0;
-
-  while (i < input.length) {
-    if (input[i] !== "<") {
-      let j = i + 1;
-      while (j < input.length && input[j] !== "<") j++;
-      tokens.push({ kind: "text", value: input.slice(i, j) });
-      i = j;
-      continue;
-    }
-
-    const close = input.indexOf(">", i + 1);
-    if (close === -1) {
-      tokens.push({ kind: "text", value: input.slice(i) });
-      break;
-    }
-
-    const inner = input.slice(i + 1, close);
-    i = close + 1;
-
-    if (inner.startsWith("/")) {
-      tokens.push({ kind: "close", tag: inner.slice(1).toLowerCase().trim() });
-      continue;
-    }
-
-    const parts = splitTagArgs(inner);
-    const tagName = parts[0].toLowerCase().trim();
-    const args = parts.slice(1);
-    tokens.push({ kind: "open", tag: tagName, args });
-  }
-
-  return tokens;
-}
-
-// Split "gradient:#ff0000:#00ff00" respecting colons inside nested parens
-function splitTagArgs(inner: string): string[] {
-  return inner.split(":");
-}
-
-export function parse(
+/**
+ * Transforms a raw ChronoCore MiniMessage string into standard MiniMessage
+ * by resolving all project-specific and ChronoCore-specific tags before the
+ * library parser sees them.
+ */
+export function preprocessForPreview(
   input: string,
   themeColors: Record<string, string> = {},
-  mockArgs: Record<string, string> = {}
-): Span[] {
-  // Substitute {{name}} first (direct string replacement)
+  mockArgs: Record<string, string> = {},
+  customTags: CustomTag[] = []
+): string {
   let text = input;
+
+  // 1. {{name}} brace substitution — direct string replacement
   for (const [name, val] of Object.entries(mockArgs)) {
     text = text.replaceAll(`{{${name}}}`, val);
   }
-  // Highlight remaining {{name}} as placeholders
-  text = text.replace(/\{\{([^}]+)\}\}/g, "[$1]");
+  // Remaining {{name}} shown as blue placeholder
+  text = text.replace(/\{\{([^}]+)\}\}/g, "<color:#aaaaff>[$1]</color>");
 
-  const tokens = tokenize(text);
-  const spans: Span[] = [];
-
-  type StackEntry = { tag: string; style: Partial<Style> };
-  const styleStack: StackEntry[] = [{ tag: "root", style: {} }];
-
-  function currentStyle(): Style {
-    const merged: Style = {};
-    for (const entry of styleStack) {
-      Object.assign(merged, entry.style);
-    }
-    return merged;
+  // 2. <argName> tag substitution for mock values (before any other tag processing)
+  for (const [name, val] of Object.entries(mockArgs)) {
+    if (name.includes(":")) continue; // skip compound keys like "papi:foo"
+    text = text.replaceAll(`<${name}>`, val);
+    text = text.replaceAll(`</${name}>`, "");
   }
 
-  function resolveColor(tag: string): string | undefined {
-    if (tag in NAMED_COLORS) return NAMED_COLORS[tag];
-    if (tag in themeColors) return themeColors[tag];
-    if (tag.startsWith("#") && /^#[0-9a-fA-F]{3,8}$/.test(tag)) return tag;
-    return undefined;
+  // 3. Theme color tags: <primary> → <color:#hex>  </primary> → </color>
+  for (const [name, hex] of Object.entries(themeColors)) {
+    if (STANDARD_TAGS.has(name)) continue;
+    text = text.replaceAll(`<${name}>`, `<color:${hex}>`);
+    text = text.replaceAll(`</${name}>`, `</color>`);
+    text = text.replaceAll(`<${name}/>`, "");
   }
 
-  for (const token of tokens) {
-    if (token.kind === "text") {
-      if (token.value === "") continue;
-      spans.push({ type: "text", text: token.value, style: currentStyle() });
-      continue;
-    }
-
-    if (token.kind === "close") {
-      // Pop until we find the matching open tag
-      for (let k = styleStack.length - 1; k >= 0; k--) {
-        if (styleStack[k].tag === token.tag) {
-          styleStack.splice(k, 1);
-          break;
-        }
-      }
-      continue;
-    }
-
-    if (token.kind === "open") {
-      const { tag, args } = token;
-
-      // newline / br
-      if (tag === "newline" || tag === "br") {
-        spans.push({ type: "newline" });
-        continue;
-      }
-
-      // reset
-      if (tag === "reset") {
-        styleStack.splice(1); // keep root
-        continue;
-      }
-
-      // papi placeholder
-      if (tag === "papi") {
-        const placeholder = args[0] ?? "?";
-        const mockVal = mockArgs[`papi:${placeholder}`];
-        spans.push({
-          type: "text",
-          text: mockVal ?? `{${placeholder}}`,
-          style: { ...currentStyle(), color: "#aaaaff" },
-        });
-        continue;
-      }
-
-      // progress bar
-      if (tag === "progress") {
-        const current = args[0] ?? "?";
-        const max = args[1] ?? "?";
-        spans.push({ type: "progress", current, max, style: currentStyle() });
-        continue;
-      }
-
-      // statchar — render as 🗡 or similar
-      if (tag === "statchar") {
-        spans.push({
-          type: "text",
-          text: `[${args[0] ?? "stat"}]`,
-          style: { ...currentStyle(), color: "#99aaff" },
-        });
-        continue;
-      }
-
-      // click
-      if (tag === "click") {
-        const [action, ...rest] = args;
-        const url = action === "open_url" ? rest.join(":") : undefined;
-        styleStack.push({ tag, style: { clickUrl: url } });
-        continue;
-      }
-
-      // hover
-      if (tag === "hover") {
-        const hoverText = args.slice(1).join(":");
-        styleStack.push({ tag, style: { hoverText } });
-        continue;
-      }
-
-      // gradient
-      if (tag === "gradient") {
-        styleStack.push({ tag, style: { gradient: args } });
-        continue;
-      }
-
-      // rainbow
-      if (tag === "rainbow") {
-        styleStack.push({ tag, style: { gradient: ["#ff0000", "#ff7700", "#ffff00", "#00ff00", "#0000ff", "#8b00ff"] } });
-        continue;
-      }
-
-      // named color
-      const color = resolveColor(tag);
-      if (color) {
-        styleStack.push({ tag, style: { color } });
-        continue;
-      }
-
-      // decoration
-      if (DECORATIONS.has(tag)) {
-        styleStack.push({ tag, style: { [decKey(tag)]: true } });
-        continue;
-      }
-
-      // known prefix tags — render their display value
-      const prefixTags: Record<string, string> = {
-        auction_prefix: "[Auction] ",
-        party_prefix: "[Party] ",
-        chat_prefix: "[Chat] ",
-        guild_prefix: "[Guild] ",
-        special_prefix: "",
-        base_prefix: "",
-        type_rarity: "[Rarity] ",
-      };
-      if (tag in prefixTags) {
-        spans.push({
-          type: "text",
-          text: prefixTags[tag],
-          style: { ...currentStyle(), color: themeColors["primary"] ?? "#5865F2" },
-        });
-        continue;
-      }
-
-      // argument tag — substitute mock value or show as placeholder
-      const mockVal = mockArgs[tag];
-      spans.push({
-        type: "text",
-        text: mockVal !== undefined ? mockVal : `<${tag}>`,
-        style: mockVal !== undefined
-          ? currentStyle()
-          : { ...currentStyle(), color: "#ffaa00" },
-      });
-    }
+  // 4. Admin-defined custom tags: <party_prefix> → <color:#hex>display</color>
+  for (const ct of customTags) {
+    text = text.replaceAll(`<${ct.name}>`, `<color:${ct.color}>${ct.display}</color>`);
+    text = text.replaceAll(`</${ct.name}>`, "");
+    text = text.replaceAll(`<${ct.name}/>`, "");
   }
 
-  return spans;
+  // 5. Built-in prefix tag fallbacks (only if not already covered by theme/custom/mock)
+  const handled = new Set([
+    ...Object.keys(themeColors),
+    ...customTags.map((ct) => ct.name),
+    ...Object.keys(mockArgs).filter((k) => !k.includes(":")),
+  ]);
+  const primaryColor = themeColors.primary ?? "#5865F2";
+  for (const [name, display] of BUILTIN_PREFIX_TAGS) {
+    if (handled.has(name)) continue;
+    text = text.replaceAll(
+      `<${name}>`,
+      display ? `<color:${primaryColor}>${display}</color>` : ""
+    );
+    text = text.replaceAll(`</${name}>`, "");
+    text = text.replaceAll(`<${name}/>`, "");
+  }
+
+  // 6. <papi:placeholder> — PlaceholderAPI values (server-side only, show mock or label)
+  text = text.replace(/<papi:([^>]+)>/g, (_, placeholder) => {
+    const mockVal = mockArgs[`papi:${placeholder}`];
+    return mockVal ? mockVal : `<color:#aaaaff>{${placeholder}}</color>`;
+  });
+
+  // 7. <progress:cur:max> — render as ASCII progress bar
+  text = text.replace(/<progress:([^:>]+):([^>]+)>/g, (_, cur, max) => {
+    const curNum = parseFloat(cur);
+    const maxNum = parseFloat(max);
+    if (!isNaN(curNum) && !isNaN(maxNum) && maxNum > 0) {
+      const filled = Math.round((curNum / maxNum) * 10);
+      return "▓".repeat(filled) + "░".repeat(10 - filled);
+    }
+    return `<color:#aaaaff>[${cur}/${max}]</color>`;
+  });
+
+  // 8. <statchar:stat> — stat icon placeholder
+  text = text.replace(
+    /<statchar:([^>]+)>/g,
+    (_, stat) => `<color:#99aaff>[${stat}]</color>`
+  );
+
+  // 9. Any remaining unknown open tags — the library silently drops them in lenient
+  //    mode, which would make arg placeholders invisible. Show them as amber labels.
+  text = text.replace(/<([a-zA-Z_][a-zA-Z0-9_]*)(?::[^>]*)?\/?>/g, (match, tagName) => {
+    if (STANDARD_TAGS.has(tagName.toLowerCase())) return match;
+    return `<color:#ffaa00>[${tagName}]</color>`;
+  });
+  // Drop orphaned closing tags for non-standard names (already converted above)
+  text = text.replace(/<\/([a-zA-Z_][a-zA-Z0-9_]*)>/g, (match, tagName) => {
+    if (STANDARD_TAGS.has(tagName.toLowerCase())) return match;
+    return "";
+  });
+
+  return text;
+}
+
+/**
+ * Renders a ChronoCore MiniMessage string to an HTML string.
+ */
+export function renderToHTML(
+  input: string,
+  themeColors: Record<string, string> = {},
+  mockArgs: Record<string, string> = {},
+  customTags: CustomTag[] = []
+): string {
+  try {
+    const preprocessed = preprocessForPreview(input, themeColors, mockArgs, customTags);
+    const component = mm.deserialize(preprocessed);
+    return mm.toHTML(component);
+  } catch {
+    return `<span style="color:#ff5555">[render error]</span>`;
+  }
 }

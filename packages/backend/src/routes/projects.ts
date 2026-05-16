@@ -9,9 +9,25 @@ import {
   comments,
   users,
 } from "../db/schema.ts";
-import { eq, and } from "drizzle-orm";
+import { eq, and, count, ne, inArray, sql } from "drizzle-orm";
 import { requireAuth, requireRole } from "../lib/auth.ts";
 import { importLangFiles } from "../lib/importer.ts";
+
+async function updateLocaleProgress(localeId: string, projectId: string) {
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(translationKeys)
+    .innerJoin(translationFiles, eq(translationKeys.fileId, translationFiles.id))
+    .where(eq(translationFiles.projectId, projectId));
+
+  const [{ approved }] = await db
+    .select({ approved: sql<number>`count(distinct ${translations.keyId})` })
+    .from(translations)
+    .where(and(eq(translations.localeId, localeId), eq(translations.status, "approved")));
+
+  const pct = Number(total) > 0 ? ((Number(approved) / Number(total)) * 100).toFixed(2) : "0.00";
+  await db.update(locales).set({ progressPct: pct }).where(eq(locales.id, localeId));
+}
 
 export async function projectRoutes(app: FastifyInstance) {
   // List projects
@@ -87,7 +103,6 @@ export async function projectRoutes(app: FastifyInstance) {
 
     if (!locale) return keys;
 
-    // Find the locale record
     const [localeRecord] = await db
       .select()
       .from(locales)
@@ -101,23 +116,79 @@ export async function projectRoutes(app: FastifyInstance) {
 
     if (!localeRecord) return keys;
 
-    // Attach translation status per key
     const keyIds = keys.map((k) => k.id);
     if (keyIds.length === 0) return keys;
 
-    const existingTranslations = await db
+    // Approved translation per key (at most one)
+    const approvedRows = await db
       .select()
       .from(translations)
-      .where(eq(translations.localeId, localeRecord.id));
+      .where(
+        and(
+          eq(translations.localeId, localeRecord.id),
+          eq(translations.status, "approved"),
+          inArray(translations.keyId, keyIds)
+        )
+      );
 
-    const translationMap = new Map(
-      existingTranslations.map((t) => [t.keyId, t])
-    );
+    // Count of pending suggestions per key
+    const pendingCounts = await db
+      .select({ keyId: translations.keyId, n: count() })
+      .from(translations)
+      .where(
+        and(
+          eq(translations.localeId, localeRecord.id),
+          eq(translations.status, "pending"),
+          inArray(translations.keyId, keyIds)
+        )
+      )
+      .groupBy(translations.keyId);
+
+    const approvedMap = new Map(approvedRows.map((t) => [t.keyId, t]));
+    const pendingMap = new Map(pendingCounts.map((p) => [p.keyId, Number(p.n)]));
 
     return keys.map((k) => ({
       ...k,
-      translation: translationMap.get(k.id) ?? null,
+      translation: approvedMap.get(k.id) ?? null,
+      pendingCount: pendingMap.get(k.id) ?? 0,
     }));
+  });
+
+  // List suggestions (all statuses) for a key+locale
+  app.get<{
+    Params: { id: string; keyId: string };
+    Querystring: { locale: string };
+  }>("/projects/:id/keys/:keyId/suggestions", async (req, reply) => {
+    const { keyId, id: projectId } = req.params;
+    const { locale } = req.query;
+    if (!locale) return reply.code(400).send({ error: "locale query param required" });
+
+    const [localeRecord] = await db
+      .select()
+      .from(locales)
+      .where(and(eq(locales.projectId, projectId), eq(locales.localeCode, locale)))
+      .limit(1);
+    if (!localeRecord) return reply.code(404).send({ error: "Locale not found" });
+
+    return db
+      .select({
+        id: translations.id,
+        value: translations.value,
+        status: translations.status,
+        submittedAt: translations.submittedAt,
+        reviewedAt: translations.reviewedAt,
+        submitterName: users.username,
+        submitterAvatar: users.avatarUrl,
+      })
+      .from(translations)
+      .leftJoin(users, eq(translations.submittedBy, users.id))
+      .where(
+        and(
+          eq(translations.keyId, keyId),
+          eq(translations.localeId, localeRecord.id)
+        )
+      )
+      .orderBy(translations.submittedAt);
   });
 
   // Add a locale to a project (admin only)
@@ -137,7 +208,7 @@ export async function projectRoutes(app: FastifyInstance) {
     return locale;
   });
 
-  // Submit or update a translation
+  // Submit a translation suggestion (one pending per user per key+locale)
   app.post<{
     Params: { id: string; keyId: string; locale: string };
     Body: { value: string };
@@ -150,7 +221,6 @@ export async function projectRoutes(app: FastifyInstance) {
     if (typeof value !== "string" || value.trim() === "")
       return reply.code(400).send({ error: "value is required" });
 
-    // Resolve locale record
     const [localeRecord] = await db
       .select()
       .from(locales)
@@ -158,25 +228,129 @@ export async function projectRoutes(app: FastifyInstance) {
       .limit(1);
     if (!localeRecord) return reply.code(404).send({ error: "Locale not found" });
 
-    const [result] = await db
-      .insert(translations)
-      .values({
-        keyId,
-        localeId: localeRecord.id,
-        value,
-        status: "pending",
-        submittedBy: payload.id,
-      })
-      .onConflictDoUpdate({
-        target: [translations.keyId, translations.localeId],
-        set: { value, status: "pending", submittedBy: payload.id, submittedAt: new Date() },
-      })
-      .returning();
+    // If user already has a pending suggestion for this key, update it
+    const [existingPending] = await db
+      .select()
+      .from(translations)
+      .where(
+        and(
+          eq(translations.keyId, keyId),
+          eq(translations.localeId, localeRecord.id),
+          eq(translations.submittedBy, payload.id),
+          eq(translations.status, "pending")
+        )
+      )
+      .limit(1);
 
+    let result;
+    if (existingPending) {
+      [result] = await db
+        .update(translations)
+        .set({ value, submittedAt: new Date() })
+        .where(eq(translations.id, existingPending.id))
+        .returning();
+    } else {
+      [result] = await db
+        .insert(translations)
+        .values({ keyId, localeId: localeRecord.id, value, status: "pending", submittedBy: payload.id })
+        .returning();
+    }
+
+    await updateLocaleProgress(localeRecord.id, projectId);
     return result;
   });
 
-  // List comments for a key
+  // Approve a suggestion by ID (reviewer+)
+  app.post<{ Params: { suggestionId: string } }>(
+    "/suggestions/:suggestionId/approve",
+    async (req, reply) => {
+      const actor = await requireRole(req, reply, "reviewer");
+      const { suggestionId } = req.params;
+
+      const [suggestion] = await db
+        .select()
+        .from(translations)
+        .where(eq(translations.id, suggestionId))
+        .limit(1);
+      if (!suggestion) return reply.code(404).send({ error: "Suggestion not found" });
+      if (suggestion.status !== "pending")
+        return reply.code(400).send({ error: "Only pending suggestions can be approved" });
+
+      // Supersede all other pending/approved rows for the same key+locale
+      await db
+        .update(translations)
+        .set({ status: "superseded" })
+        .where(
+          and(
+            eq(translations.keyId, suggestion.keyId),
+            eq(translations.localeId, suggestion.localeId),
+            ne(translations.id, suggestionId),
+            inArray(translations.status, ["pending", "approved"])
+          )
+        );
+
+      const [result] = await db
+        .update(translations)
+        .set({ status: "approved", reviewedBy: actor.id, reviewedAt: new Date() })
+        .where(eq(translations.id, suggestionId))
+        .returning();
+
+      // Resolve project ID for progress update
+      const [keyRecord] = await db
+        .select()
+        .from(translationKeys)
+        .where(eq(translationKeys.id, suggestion.keyId))
+        .limit(1);
+      const [fileRecord] = await db
+        .select()
+        .from(translationFiles)
+        .where(eq(translationFiles.id, keyRecord.fileId))
+        .limit(1);
+
+      await updateLocaleProgress(suggestion.localeId, fileRecord.projectId);
+      return result;
+    }
+  );
+
+  // Reject a suggestion by ID (reviewer+)
+  app.post<{ Params: { suggestionId: string } }>(
+    "/suggestions/:suggestionId/reject",
+    async (req, reply) => {
+      const actor = await requireRole(req, reply, "reviewer");
+      const { suggestionId } = req.params;
+
+      const [suggestion] = await db
+        .select()
+        .from(translations)
+        .where(eq(translations.id, suggestionId))
+        .limit(1);
+      if (!suggestion) return reply.code(404).send({ error: "Suggestion not found" });
+      if (suggestion.status !== "pending")
+        return reply.code(400).send({ error: "Only pending suggestions can be rejected" });
+
+      const [result] = await db
+        .update(translations)
+        .set({ status: "rejected", reviewedBy: actor.id, reviewedAt: new Date() })
+        .where(eq(translations.id, suggestionId))
+        .returning();
+
+      const [keyRecord] = await db
+        .select()
+        .from(translationKeys)
+        .where(eq(translationKeys.id, suggestion.keyId))
+        .limit(1);
+      const [fileRecord] = await db
+        .select()
+        .from(translationFiles)
+        .where(eq(translationFiles.id, keyRecord.fileId))
+        .limit(1);
+
+      await updateLocaleProgress(suggestion.localeId, fileRecord.projectId);
+      return result;
+    }
+  );
+
+  // List comments for a key (threaded — flat list with parentId)
   app.get<{
     Params: { id: string; keyId: string };
     Querystring: { locale: string };
@@ -194,11 +368,13 @@ export async function projectRoutes(app: FastifyInstance) {
       .limit(1);
     if (!localeRecord) return reply.code(404).send({ error: "Locale not found" });
 
-    const rows = await db
+    return db
       .select({
         id: comments.id,
+        parentId: comments.parentId,
         content: comments.content,
         createdAt: comments.createdAt,
+        userId: comments.userId,
         username: users.username,
         avatarUrl: users.avatarUrl,
       })
@@ -206,15 +382,13 @@ export async function projectRoutes(app: FastifyInstance) {
       .innerJoin(users, eq(comments.userId, users.id))
       .where(and(eq(comments.keyId, keyId), eq(comments.localeId, localeRecord.id)))
       .orderBy(comments.createdAt);
-
-    return rows;
   });
 
-  // Post a comment
+  // Post a comment (with optional parentId for threading)
   app.post<{
     Params: { id: string; keyId: string };
     Querystring: { locale: string };
-    Body: { content: string };
+    Body: { content: string; parentId?: string };
   }>("/projects/:id/keys/:keyId/comments", async (req, reply) => {
     await requireAuth(req, reply);
     const payload = req.user as { id: string };
@@ -231,9 +405,33 @@ export async function projectRoutes(app: FastifyInstance) {
       .limit(1);
     if (!localeRecord) return reply.code(404).send({ error: "Locale not found" });
 
+    const { parentId } = req.body;
+
+    // Validate parentId if provided (must exist in same thread)
+    if (parentId) {
+      const [parent] = await db
+        .select()
+        .from(comments)
+        .where(
+          and(
+            eq(comments.id, parentId),
+            eq(comments.keyId, keyId),
+            eq(comments.localeId, localeRecord.id)
+          )
+        )
+        .limit(1);
+      if (!parent) return reply.code(400).send({ error: "Invalid parentId" });
+    }
+
     const [comment] = await db
       .insert(comments)
-      .values({ keyId, localeId: localeRecord.id, userId: payload.id, content: req.body.content.trim() })
+      .values({
+        keyId,
+        localeId: localeRecord.id,
+        userId: payload.id,
+        content: req.body.content.trim(),
+        parentId: parentId ?? null,
+      })
       .returning();
 
     return comment;
@@ -256,7 +454,6 @@ export async function projectRoutes(app: FastifyInstance) {
     const { langDir } = req.body;
     if (!langDir) return reply.code(400).send({ error: "langDir is required" });
 
-    const result = await importLangFiles(req.params.id, project.sourceLocale, langDir);
-    return result;
+    return importLangFiles(req.params.id, project.sourceLocale, langDir);
   });
 }

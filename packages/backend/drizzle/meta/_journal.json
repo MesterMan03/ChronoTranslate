@@ -8,6 +8,20 @@
       "when": 1778904034796,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1778905193444,
+      "tag": "0001_add_superadmin",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1778906867443,
+      "tag": "0002_suggestions_threading_customtags",
+      "breakpoints": true
     }
   ]
 }

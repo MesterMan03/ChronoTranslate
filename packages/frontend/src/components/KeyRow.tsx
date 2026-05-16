@@ -14,7 +14,12 @@ const STATUS_BADGE: Record<string, string> = {
 };
 
 export function KeyRow({ translationKey: k, isSelected, compact, onClick }: Props) {
-  const status = k.translation?.status ?? "untranslated";
+  const status =
+    k.translation?.status === "approved"
+      ? "approved"
+      : (k.pendingCount ?? 0) > 0
+      ? "pending"
+      : "untranslated";
 
   return (
     <button

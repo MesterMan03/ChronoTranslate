@@ -11,11 +11,12 @@ import {
   unique,
 } from "drizzle-orm/pg-core";
 
-export const roleEnum = pgEnum("role", ["translator", "reviewer", "admin"]);
+export const roleEnum = pgEnum("role", ["translator", "reviewer", "admin", "superadmin"]);
 export const statusEnum = pgEnum("translation_status", [
   "pending",
   "approved",
   "rejected",
+  "superseded",
 ]);
 
 export const users = pgTable("users", {
@@ -28,6 +29,12 @@ export const users = pgTable("users", {
     .notNull()
     .defaultNow(),
 });
+
+export type CustomTag = {
+  name: string;    // tag name, e.g. "party_prefix"
+  display: string; // text shown in preview, e.g. "[Party] "
+  color: string;   // hex color, e.g. "#5865F2"
+};
 
 export const projects = pgTable("projects", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -42,13 +49,17 @@ export const projects = pgTable("projects", {
     .notNull()
     .$type<Record<string, string>>()
     .default({
-      primary: "#5865F2",
-      secondary: "#99AAB5",
-      highlight: "#FEE75C",
-      text_color: "#DCDDDE",
-      error_color: "#ED4245",
-      dark_color: "#2C2F33",
+      primary: "#0898FC",
+      secondary: "#C3B38B",
+      highlight: "#55FFFF",
+      text_color: "#AAAAAA",
+      error_color: "#FF5555",
+      dark_color: "#555555",
     }),
+  customTags: jsonb("custom_tags")
+    .notNull()
+    .$type<CustomTag[]>()
+    .default([]),
   createdBy: uuid("created_by").references(() => users.id),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
@@ -74,7 +85,6 @@ export const translationFiles = pgTable(
     projectId: uuid("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
-    // e.g. "ui", "dialogue/mester" — no .json, no locale prefix
     filePath: text("file_path").notNull(),
   },
   (t) => [unique("uq_file_per_project").on(t.projectId, t.filePath)]
@@ -92,11 +102,8 @@ export const translationKeys = pgTable(
     fileId: uuid("file_id")
       .notNull()
       .references(() => translationFiles.id, { onDelete: "cascade" }),
-    // dot-notation key, e.g. "ui.back.title"
     key: text("key").notNull(),
-    // newline-joined for array keys, plain string for scalar keys
     sourceValue: text("source_value").notNull(),
-    // true when the source value is a JSON array (stored as \n-joined lines)
     isArray: boolean("is_array").notNull().default(false),
     detectedArgs: jsonb("detected_args")
       .notNull()
@@ -106,27 +113,25 @@ export const translationKeys = pgTable(
   (t) => [unique("uq_key_per_file").on(t.fileId, t.key)]
 );
 
-export const translations = pgTable(
-  "translations",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    keyId: uuid("key_id")
-      .notNull()
-      .references(() => translationKeys.id, { onDelete: "cascade" }),
-    localeId: uuid("locale_id")
-      .notNull()
-      .references(() => locales.id, { onDelete: "cascade" }),
-    value: text("value").notNull(),
-    status: statusEnum("status").notNull().default("pending"),
-    submittedBy: uuid("submitted_by").references(() => users.id),
-    reviewedBy: uuid("reviewed_by").references(() => users.id),
-    submittedAt: timestamp("submitted_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
-  },
-  (t) => [unique("uq_translation_per_locale").on(t.keyId, t.localeId)]
-);
+// No unique constraint — multiple suggestions per (keyId, localeId) are allowed.
+// At most one row per (keyId, localeId) should have status='approved' at any time.
+export const translations = pgTable("translations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  keyId: uuid("key_id")
+    .notNull()
+    .references(() => translationKeys.id, { onDelete: "cascade" }),
+  localeId: uuid("locale_id")
+    .notNull()
+    .references(() => locales.id, { onDelete: "cascade" }),
+  value: text("value").notNull(),
+  status: statusEnum("status").notNull().default("pending"),
+  submittedBy: uuid("submitted_by").references(() => users.id),
+  reviewedBy: uuid("reviewed_by").references(() => users.id),
+  submittedAt: timestamp("submitted_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+});
 
 export const comments = pgTable("comments", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -139,6 +144,7 @@ export const comments = pgTable("comments", {
   userId: uuid("user_id")
     .notNull()
     .references(() => users.id),
+  parentId: uuid("parent_id"),
   content: text("content").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()

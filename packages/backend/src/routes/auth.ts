@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { db } from "../db/index.ts";
 import { users } from "../db/schema.ts";
-import { eq } from "drizzle-orm";
+import { eq, and, ne } from "drizzle-orm";
 
 const DISCORD_API = "https://discord.com/api/v10";
 
@@ -77,7 +77,7 @@ export async function authRoutes(app: FastifyInstance) {
         ? `https://cdn.discordapp.com/avatars/${discordUser.id}/${discordUser.avatar}.png`
         : null;
 
-      // Upsert user
+      // Upsert user (role is not touched here — managed below)
       const [user] = await db
         .insert(users)
         .values({
@@ -91,7 +91,25 @@ export async function authRoutes(app: FastifyInstance) {
         })
         .returning();
 
-      const token = app.jwt.sign({ id: user.id, role: user.role });
+      // Superadmin assignment: controlled entirely by SUPERADMIN_DISCORD_ID env var
+      const superadminDiscordId = process.env.SUPERADMIN_DISCORD_ID;
+      const isSuperAdmin = !!superadminDiscordId && discordUser.id === superadminDiscordId;
+
+      if (isSuperAdmin && user.role !== "superadmin") {
+        // Promote this user and demote any other superadmin (Discord ID changed)
+        await db
+          .update(users)
+          .set({ role: "admin" })
+          .where(and(eq(users.role, "superadmin"), ne(users.id, user.id)));
+        await db.update(users).set({ role: "superadmin" }).where(eq(users.id, user.id));
+        user.role = "superadmin";
+      } else if (!isSuperAdmin && user.role === "superadmin") {
+        // This Discord ID is no longer the designated superadmin — demote to admin
+        await db.update(users).set({ role: "admin" }).where(eq(users.id, user.id));
+        user.role = "admin";
+      }
+
+      const token = app.jwt.sign({ id: user.id });
 
       reply
         .setCookie("token", token, {
@@ -123,7 +141,9 @@ export async function authRoutes(app: FastifyInstance) {
     return user;
   });
 
-  app.post("/logout", async (_req, reply) => {
-    reply.clearCookie("token", { path: "/" }).send({ ok: true });
-  });
+  const logout = async (_req: unknown, reply: import("fastify").FastifyReply) => {
+    reply.clearCookie("token", { path: "/" }).redirect(process.env.FRONTEND_URL ?? "http://localhost:5173");
+  };
+  app.get("/logout", logout);
+  app.post("/logout", logout);
 }

@@ -12,9 +12,27 @@ export const useAuthStore = create<AuthStore>((set) => ({
   setUser: (user) => set({ user }),
 }));
 
+// Username cache: accumulated across all API responses so @mention autocomplete works
+// without a dedicated users endpoint
+type UserCacheEntry = { id: string; username: string; avatarUrl: string | null };
+
+type UserCacheStore = {
+  users: UserCacheEntry[];
+  addUsers: (entries: UserCacheEntry[]) => void;
+};
+
+export const useUserCache = create<UserCacheStore>((set, get) => ({
+  users: [],
+  addUsers: (entries) => {
+    const existing = new Set(get().users.map((u) => u.id));
+    const fresh = entries.filter((e) => !existing.has(e.id));
+    if (fresh.length > 0) set((s) => ({ users: [...s.users, ...fresh] }));
+  },
+}));
+
 // Mock values persisted in localStorage per key
 type MockStore = {
-  mocks: Record<string, string>; // keyed by `${keyId}:${argName}`
+  mocks: Record<string, string>;
   setMock: (keyId: string, argName: string, value: string) => void;
   getMocks: (keyId: string) => Record<string, string>;
 };
