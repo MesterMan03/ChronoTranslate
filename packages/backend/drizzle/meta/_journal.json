@@ -5,15 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1778898785572,
-      "tag": "0000_fantastic_vector",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1778898890809,
-      "tag": "0001_crazy_mauler",
+      "when": 1778904034796,
+      "tag": "0000_init",
       "breakpoints": true
     }
   ]

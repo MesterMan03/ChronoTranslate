@@ -41,8 +41,7 @@ export type TranslationKey = {
   fileId: string;
   key: string;
   sourceValue: string;
-  isArrayItem: boolean;
-  arrayParent: string | null;
+  isArray: boolean;
   detectedArgs: DetectedArg[];
   translation?: Translation | null;
 };
@@ -54,4 +53,12 @@ export type Translation = {
   value: string;
   status: "pending" | "approved" | "rejected";
   submittedAt: string;
+};
+
+export type Comment = {
+  id: string;
+  content: string;
+  createdAt: string;
+  username: string;
+  avatarUrl: string | null;
 };

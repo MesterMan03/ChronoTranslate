@@ -6,6 +6,8 @@ import {
   translationFiles,
   translationKeys,
   translations,
+  comments,
+  users,
 } from "../db/schema.ts";
 import { eq, and } from "drizzle-orm";
 import { requireAuth, requireRole } from "../lib/auth.ts";
@@ -118,6 +120,125 @@ export async function projectRoutes(app: FastifyInstance) {
     }));
   });
 
+  // Add a locale to a project (admin only)
+  app.post<{
+    Params: { id: string };
+    Body: { localeCode: string; displayName: string };
+  }>("/projects/:id/locales", async (req, reply) => {
+    await requireRole(req, reply, "admin");
+    const { localeCode, displayName } = req.body;
+    if (!localeCode || !displayName)
+      return reply.code(400).send({ error: "localeCode and displayName are required" });
+
+    const [locale] = await db
+      .insert(locales)
+      .values({ projectId: req.params.id, localeCode, displayName })
+      .returning();
+    return locale;
+  });
+
+  // Submit or update a translation
+  app.post<{
+    Params: { id: string; keyId: string; locale: string };
+    Body: { value: string };
+  }>("/projects/:id/keys/:keyId/translations/:locale", async (req, reply) => {
+    await requireAuth(req, reply);
+    const payload = req.user as { id: string };
+    const { keyId, locale, id: projectId } = req.params;
+    const { value } = req.body;
+
+    if (typeof value !== "string" || value.trim() === "")
+      return reply.code(400).send({ error: "value is required" });
+
+    // Resolve locale record
+    const [localeRecord] = await db
+      .select()
+      .from(locales)
+      .where(and(eq(locales.projectId, projectId), eq(locales.localeCode, locale)))
+      .limit(1);
+    if (!localeRecord) return reply.code(404).send({ error: "Locale not found" });
+
+    const [result] = await db
+      .insert(translations)
+      .values({
+        keyId,
+        localeId: localeRecord.id,
+        value,
+        status: "pending",
+        submittedBy: payload.id,
+      })
+      .onConflictDoUpdate({
+        target: [translations.keyId, translations.localeId],
+        set: { value, status: "pending", submittedBy: payload.id, submittedAt: new Date() },
+      })
+      .returning();
+
+    return result;
+  });
+
+  // List comments for a key
+  app.get<{
+    Params: { id: string; keyId: string };
+    Querystring: { locale: string };
+  }>("/projects/:id/keys/:keyId/comments", async (req, reply) => {
+    await requireAuth(req, reply);
+    const { keyId, id: projectId } = req.params;
+    const { locale } = req.query;
+
+    if (!locale) return reply.code(400).send({ error: "locale query param required" });
+
+    const [localeRecord] = await db
+      .select()
+      .from(locales)
+      .where(and(eq(locales.projectId, projectId), eq(locales.localeCode, locale)))
+      .limit(1);
+    if (!localeRecord) return reply.code(404).send({ error: "Locale not found" });
+
+    const rows = await db
+      .select({
+        id: comments.id,
+        content: comments.content,
+        createdAt: comments.createdAt,
+        username: users.username,
+        avatarUrl: users.avatarUrl,
+      })
+      .from(comments)
+      .innerJoin(users, eq(comments.userId, users.id))
+      .where(and(eq(comments.keyId, keyId), eq(comments.localeId, localeRecord.id)))
+      .orderBy(comments.createdAt);
+
+    return rows;
+  });
+
+  // Post a comment
+  app.post<{
+    Params: { id: string; keyId: string };
+    Querystring: { locale: string };
+    Body: { content: string };
+  }>("/projects/:id/keys/:keyId/comments", async (req, reply) => {
+    await requireAuth(req, reply);
+    const payload = req.user as { id: string };
+    const { keyId, id: projectId } = req.params;
+    const { locale } = req.query;
+
+    if (!locale) return reply.code(400).send({ error: "locale query param required" });
+    if (!req.body.content?.trim()) return reply.code(400).send({ error: "content is required" });
+
+    const [localeRecord] = await db
+      .select()
+      .from(locales)
+      .where(and(eq(locales.projectId, projectId), eq(locales.localeCode, locale)))
+      .limit(1);
+    if (!localeRecord) return reply.code(404).send({ error: "Locale not found" });
+
+    const [comment] = await db
+      .insert(comments)
+      .values({ keyId, localeId: localeRecord.id, userId: payload.id, content: req.body.content.trim() })
+      .returning();
+
+    return comment;
+  });
+
   // Import source lang files (admin only)
   app.post<{
     Params: { id: string };
@@ -135,7 +256,7 @@ export async function projectRoutes(app: FastifyInstance) {
     const { langDir } = req.body;
     if (!langDir) return reply.code(400).send({ error: "langDir is required" });
 
-    const result = await importLangFiles(req.params.id, langDir);
+    const result = await importLangFiles(req.params.id, project.sourceLocale, langDir);
     return result;
   });
 }

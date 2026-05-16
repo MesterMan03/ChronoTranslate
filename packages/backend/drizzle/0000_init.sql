@@ -32,7 +32,8 @@ CREATE TABLE "projects" (
 CREATE TABLE "translation_files" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"project_id" uuid NOT NULL,
-	"file_path" text NOT NULL
+	"file_path" text NOT NULL,
+	CONSTRAINT "uq_file_per_project" UNIQUE("project_id","file_path")
 );
 --> statement-breakpoint
 CREATE TABLE "translation_keys" (
@@ -40,9 +41,9 @@ CREATE TABLE "translation_keys" (
 	"file_id" uuid NOT NULL,
 	"key" text NOT NULL,
 	"source_value" text NOT NULL,
-	"is_array_item" boolean DEFAULT false NOT NULL,
-	"array_parent" text,
-	"detected_args" jsonb DEFAULT '[]'::jsonb NOT NULL
+	"is_array" boolean DEFAULT false NOT NULL,
+	"detected_args" jsonb DEFAULT '[]'::jsonb NOT NULL,
+	CONSTRAINT "uq_key_per_file" UNIQUE("file_id","key")
 );
 --> statement-breakpoint
 CREATE TABLE "translations" (
@@ -54,7 +55,8 @@ CREATE TABLE "translations" (
 	"submitted_by" uuid,
 	"reviewed_by" uuid,
 	"submitted_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"reviewed_at" timestamp with time zone
+	"reviewed_at" timestamp with time zone,
+	CONSTRAINT "uq_translation_per_locale" UNIQUE("key_id","locale_id")
 );
 --> statement-breakpoint
 CREATE TABLE "users" (

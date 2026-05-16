@@ -94,10 +94,10 @@ export const translationKeys = pgTable(
       .references(() => translationFiles.id, { onDelete: "cascade" }),
     // dot-notation key, e.g. "ui.back.title"
     key: text("key").notNull(),
+    // newline-joined for array keys, plain string for scalar keys
     sourceValue: text("source_value").notNull(),
-    isArrayItem: boolean("is_array_item").notNull().default(false),
-    // null for non-array items
-    arrayParent: text("array_parent"),
+    // true when the source value is a JSON array (stored as \n-joined lines)
+    isArray: boolean("is_array").notNull().default(false),
     detectedArgs: jsonb("detected_args")
       .notNull()
       .$type<DetectedArg[]>()

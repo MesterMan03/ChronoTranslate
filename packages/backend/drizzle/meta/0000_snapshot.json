@@ -1,5 +1,5 @@
 {
-  "id": "9b3f9491-5da1-4649-afde-d127c23102b4",
+  "id": "2edb416b-a7b4-4108-92d6-60787a925c22",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -280,7 +280,16 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "uq_file_per_project": {
+          "name": "uq_file_per_project",
+          "nullsNotDistinct": false,
+          "columns": [
+            "project_id",
+            "file_path"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -314,18 +323,12 @@
           "primaryKey": false,
           "notNull": true
         },
-        "is_array_item": {
-          "name": "is_array_item",
+        "is_array": {
+          "name": "is_array",
           "type": "boolean",
           "primaryKey": false,
           "notNull": true,
           "default": false
-        },
-        "array_parent": {
-          "name": "array_parent",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
         },
         "detected_args": {
           "name": "detected_args",
@@ -352,7 +355,16 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "uq_key_per_file": {
+          "name": "uq_key_per_file",
+          "nullsNotDistinct": false,
+          "columns": [
+            "file_id",
+            "key"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -476,7 +488,16 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "uq_translation_per_locale": {
+          "name": "uq_translation_per_locale",
+          "nullsNotDistinct": false,
+          "columns": [
+            "key_id",
+            "locale_id"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false

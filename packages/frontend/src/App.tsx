@@ -28,7 +28,7 @@ export default function App() {
       <AuthLoader>
         <div className="min-h-screen flex flex-col">
           <Navbar />
-          <main className="flex-1 max-w-5xl mx-auto w-full">
+          <main className="flex-1 w-full">
             <Routes>
               <Route path="/" element={<ProjectList />} />
               <Route path="/projects/:id" element={<ProjectView />} />
