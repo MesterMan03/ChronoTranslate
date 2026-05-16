@@ -5,7 +5,6 @@ import { MiniMessagePreview } from "../components/MiniMessagePreview.tsx";
 import { MockArgEditor } from "../components/MockArgEditor.tsx";
 import { RawValue } from "../components/RawValue.tsx";
 import { useAuthStore, useMockStore } from "../store.ts";
-import { Link } from "react-router";
 
 const PAGE_SIZE = 50;
 
@@ -197,7 +196,7 @@ function PendingCard({
           {item.detectedArgs.length > 0 && (
             <div>
               <div className="text-xs text-white/30 mb-1 uppercase tracking-wider">Mock arguments</div>
-              <MockArgEditor keyId={item.keyId} args={item.detectedArgs} />
+              <MockArgEditor keyId={item.keyId} args={item.detectedArgs} customTags={item.customTags} />
             </div>
           )}
           <div className="grid grid-cols-2 gap-4">

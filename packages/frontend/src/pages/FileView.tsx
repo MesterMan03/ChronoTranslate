@@ -84,6 +84,9 @@ export function FileView() {
               className="bg-white/5 border border-white/10 rounded px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500 shrink-0"
             >
               <option value="">Source only</option>
+              <option value={project.sourceLocale}>
+                Edit source ({project.sourceLocale})
+              </option>
               {locales.map((l) => (
                 <option key={l.id} value={l.localeCode}>
                   {l.displayName} ({l.localeCode})

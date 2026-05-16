@@ -33,6 +33,7 @@ export const users = pgTable("users", {
 export type CustomTag = {
   name: string;
   miniMessage: string;
+  nonMockable?: boolean;
 };
 
 export const projects = pgTable("projects", {
@@ -120,6 +121,39 @@ export const translations = pgTable("translations", {
     .defaultNow(),
   reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
 });
+
+export const sourceSuggestions = pgTable("source_suggestions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  keyId: uuid("key_id")
+    .notNull()
+    .references(() => translationKeys.id, { onDelete: "cascade" }),
+  value: text("value").notNull(),
+  status: statusEnum("status").notNull().default("pending"),
+  submittedBy: uuid("submitted_by").references(() => users.id),
+  reviewedBy: uuid("reviewed_by").references(() => users.id),
+  submittedAt: timestamp("submitted_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+});
+
+export const projectBans = pgTable(
+  "project_bans",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    bannedBy: uuid("banned_by").references(() => users.id),
+    bannedAt: timestamp("banned_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [unique("uq_ban_per_project").on(t.projectId, t.userId)]
+);
 
 export const comments = pgTable("comments", {
   id: uuid("id").primaryKey().defaultRandom(),

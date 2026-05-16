@@ -9,6 +9,7 @@ import type {
   Locale,
   Suggestion,
   CustomTag,
+  BannedUser,
 } from "./types.ts";
 
 const BASE = "/api";
@@ -27,6 +28,12 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
     headers: hasBody ? { "Content-Type": "application/json" } : {},
     body: hasBody ? JSON.stringify(body) : undefined,
   });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.json() as Promise<T>;
+}
+
+async function del<T>(path: string): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, { method: "DELETE", credentials: "include" });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return res.json() as Promise<T>;
 }
@@ -90,6 +97,18 @@ export const api = {
   submitTranslation: (projectId: string, keyId: string, locale: string, value: string) =>
     post<Translation>(`/projects/${projectId}/keys/${keyId}/translations/${locale}`, { value }),
 
+  sourceSuggestions: (projectId: string, keyId: string) =>
+    get<Suggestion[]>(`/projects/${projectId}/keys/${keyId}/source-suggestions`),
+
+  submitSourceSuggestion: (projectId: string, keyId: string, value: string) =>
+    post<Suggestion>(`/projects/${projectId}/keys/${keyId}/source-suggestions`, { value }),
+
+  approveSourceSuggestion: (suggestionId: string) =>
+    post<Suggestion>(`/source-suggestions/${suggestionId}/approve`),
+
+  rejectSourceSuggestion: (suggestionId: string) =>
+    post<Suggestion>(`/source-suggestions/${suggestionId}/reject`),
+
   approveSuggestion: (suggestionId: string) =>
     post<Translation>(`/suggestions/${suggestionId}/approve`),
 
@@ -128,6 +147,15 @@ export const api = {
 
   updateProjectTags: (projectId: string, customTags: CustomTag[]) =>
     patch<Project>(`/admin/projects/${projectId}/tags`, { customTags }),
+
+  projectBans: (projectId: string) =>
+    get<BannedUser[]>(`/admin/projects/${projectId}/bans`),
+
+  banUser: (projectId: string, userId: string) =>
+    post<BannedUser>(`/admin/projects/${projectId}/bans`, { userId }),
+
+  unbanUser: (projectId: string, userId: string) =>
+    del<BannedUser>(`/admin/projects/${projectId}/bans/${userId}`),
 
   // Review queue
   pendingTranslations: (opts?: { projectId?: string; localeCode?: string; offset?: number }) => {

@@ -1,14 +1,8 @@
-import { db } from "../db";
-import {
-  translationFiles,
-  translationKeys,
-  locales,
-  translations,
-  type DetectedArg,
-} from "../db/schema.ts";
-import { eq, and } from "drizzle-orm";
-import { readdir, readFile } from "fs/promises";
-import { join, extname } from "path";
+import {db} from "../db";
+import {type DetectedArg, locales, translationFiles, translationKeys, translations,} from "../db/schema.ts";
+import {and, eq} from "drizzle-orm";
+import {readdir, readFile} from "fs/promises";
+import {extname, join} from "path";
 
 type FlatEntry = {
   key: string;
@@ -59,7 +53,7 @@ const KNOWN_TAGS = new Set([
   "primary", "secondary", "highlight", "text_color", "error_color", "dark_color",
   "auction_prefix", "party_prefix", "chat_prefix", "guild_prefix",
   "papi", "progress", "statchar", "special_prefix", "base_prefix",
-  "type_rarity", "item",
+  "type_rarity", "item", "success_color", "trade_prefix"
 ]);
 
 const TAG_RE = /<([a-zA-Z_][a-zA-Z0-9_]*)(?::[^>]*)?\/?>/g;
@@ -276,8 +270,7 @@ export async function importLangFiles(
     if (!localeRecord) continue;
 
     const localeDir = join(langDir, localeCode);
-    const count = await importExistingTranslations(projectId, localeDir, localeRecord.id);
-    translationsImported[localeCode] = count;
+    translationsImported[localeCode] = await importExistingTranslations(projectId, localeDir, localeRecord.id);
   }
 
   return { filesImported, keysImported, translationsImported };

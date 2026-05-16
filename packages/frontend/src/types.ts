@@ -12,6 +12,7 @@ export type User = {
 export type CustomTag = {
   name: string;
   miniMessage: string;
+  nonMockable?: boolean;
 };
 
 export type Project = {
@@ -71,6 +72,15 @@ export type Suggestion = {
   reviewedAt: string | null;
   submitterName: string | null;
   submitterAvatar: string | null;
+};
+
+export type BannedUser = {
+  id: string;
+  userId: string;
+  username: string;
+  avatarUrl: string | null;
+  role: Role;
+  bannedAt: string;
 };
 
 export type Comment = {

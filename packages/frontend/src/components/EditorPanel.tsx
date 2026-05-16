@@ -27,21 +27,22 @@ export function EditorPanel({ translationKey: k, project, locale, onClose }: Pro
   const { user } = useAuthStore();
   const queryClient = useQueryClient();
 
+  const isSourceLocale = locale === project.sourceLocale;
   const draftKey = locale ? `draft:${k.id}:${locale}` : null;
 
-  // Prefer localStorage draft, then approved translation, then empty
+  // Source locale draft starts from current sourceValue; translation draft starts from approved value or empty
   const [draft, setDraft] = useState(() => {
-    if (!draftKey) return k.translation?.value ?? "";
-    return localStorage.getItem(draftKey) ?? k.translation?.value ?? "";
+    if (!draftKey) return "";
+    return localStorage.getItem(draftKey) ?? (isSourceLocale ? k.sourceValue : k.translation?.value ?? "");
   });
 
   // Reload draft when the key or locale changes (panel stays mounted across navigation)
   useEffect(() => {
     if (!draftKey) {
-      setDraft(k.translation?.value ?? "");
+      setDraft("");
       return;
     }
-    setDraft(localStorage.getItem(draftKey) ?? k.translation?.value ?? "");
+    setDraft(localStorage.getItem(draftKey) ?? (isSourceLocale ? k.sourceValue : k.translation?.value ?? ""));
   }, [k.id, locale]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persist draft to localStorage on every change
@@ -53,22 +54,28 @@ export function EditorPanel({ translationKey: k, project, locale, onClose }: Pro
   const canReview = user && (user.role === "reviewer" || user.role === "admin" || user.role === "superadmin");
 
   // Derive display status for the badge
-  const effectiveStatus =
-    k.translation?.status === "approved"
-      ? "approved"
-      : (k.pendingCount ?? 0) > 0
-      ? "pending"
-      : "untranslated";
+  const effectiveStatus = isSourceLocale
+    ? (k.pendingCount ?? 0) > 0 ? "pending" : "source"
+    : k.translation?.status === "approved"
+    ? "approved"
+    : (k.pendingCount ?? 0) > 0
+    ? "pending"
+    : "untranslated";
 
-  const submitMutation = useMutation({
+  const submitMutation = useMutation<unknown, Error, string>({
     mutationFn: (value: string) =>
-      api.submitTranslation(project.id, k.id, locale, value),
+      isSourceLocale
+        ? api.submitSourceSuggestion(project.id, k.id, value)
+        : api.submitTranslation(project.id, k.id, locale, value),
     onSuccess: () => {
-      // Clear the saved draft — it's now tracked as a suggestion
       if (draftKey) localStorage.removeItem(draftKey);
-      setDraft("");
+      setDraft(isSourceLocale ? k.sourceValue : "");
       queryClient.invalidateQueries({ queryKey: ["keys"] });
-      queryClient.invalidateQueries({ queryKey: ["suggestions", k.id, locale] });
+      if (isSourceLocale) {
+        queryClient.invalidateQueries({ queryKey: ["sourceSuggestions", k.id] });
+      } else {
+        queryClient.invalidateQueries({ queryKey: ["suggestions", k.id, locale] });
+      }
     },
   });
 
@@ -113,7 +120,6 @@ export function EditorPanel({ translationKey: k, project, locale, onClose }: Pro
                 <MiniMessagePreview
                   key={i}
                   value={line}
-    
                   customTags={project.customTags}
                   mockArgs={mocks}
                 />
@@ -122,7 +128,6 @@ export function EditorPanel({ translationKey: k, project, locale, onClose }: Pro
           ) : (
             <MiniMessagePreview
               value={k.sourceValue}
-
               customTags={project.customTags}
               mockArgs={mocks}
             />
@@ -136,7 +141,7 @@ export function EditorPanel({ translationKey: k, project, locale, onClose }: Pro
             <div className="text-xs text-white/30 mb-1.5 uppercase tracking-wider">
               Mock arguments
             </div>
-            <MockArgEditor keyId={k.id} args={k.detectedArgs} />
+            <MockArgEditor keyId={k.id} args={k.detectedArgs} customTags={project.customTags} />
           </section>
         )}
 
@@ -144,7 +149,7 @@ export function EditorPanel({ translationKey: k, project, locale, onClose }: Pro
         {locale ? (
           <section>
             <div className="text-xs text-white/30 mb-1.5 uppercase tracking-wider">
-              Translation ({locale})
+              {isSourceLocale ? `Edit source (${locale})` : `Translation (${locale})`}
             </div>
             {user ? (
               <>
@@ -196,7 +201,11 @@ export function EditorPanel({ translationKey: k, project, locale, onClose }: Pro
                 <div className="mt-2 flex items-center gap-2 flex-wrap">
                   <button
                     onClick={() => submitMutation.mutate(draft.trim())}
-                    disabled={!draft.trim() || submitMutation.isPending}
+                    disabled={
+                      !draft.trim() ||
+                      submitMutation.isPending ||
+                      (isSourceLocale && draft.trim() === k.sourceValue)
+                    }
                     className="text-sm bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed px-4 py-1.5 rounded transition-colors"
                   >
                     {submitMutation.isPending ? "Saving…" : "Submit suggestion"}
@@ -227,19 +236,29 @@ export function EditorPanel({ translationKey: k, project, locale, onClose }: Pro
         {/* Suggestions timeline */}
         {locale && (
           <section>
-            <SuggestionsTimeline
-              projectId={project.id}
-              keyId={k.id}
-              locale={locale}
-              project={project}
-              mocks={mocks}
-              canReview={!!canReview}
-            />
+            {isSourceLocale ? (
+              <SourceSuggestionsTimeline
+                projectId={project.id}
+                keyId={k.id}
+                project={project}
+                mocks={mocks}
+                canReview={!!canReview}
+              />
+            ) : (
+              <SuggestionsTimeline
+                projectId={project.id}
+                keyId={k.id}
+                locale={locale}
+                project={project}
+                mocks={mocks}
+                canReview={!!canReview}
+              />
+            )}
           </section>
         )}
 
-        {/* Comments */}
-        {locale && (
+        {/* Comments (not available for source locale — comments are locale-scoped) */}
+        {locale && !isSourceLocale && (
           <section>
             <CommentThread
               projectId={project.id}
@@ -295,6 +314,71 @@ function SuggestionsTimeline({
       queryClient.invalidateQueries({ queryKey: ["keys"] });
       queryClient.invalidateQueries({ queryKey: ["pending"] });
       queryClient.invalidateQueries({ queryKey: ["pendingCount"] });
+    },
+  });
+
+  if (isLoading || !suggestions || suggestions.length === 0) return null;
+
+  const busy = approveMutation.isPending || rejectMutation.isPending;
+
+  return (
+    <>
+      <div className="text-xs text-white/30 mb-2 uppercase tracking-wider">
+        Suggestions ({suggestions.length})
+      </div>
+      <div className="space-y-2">
+        {[...suggestions].reverse().map((s) => (
+          <SuggestionCard
+            key={s.id}
+            suggestion={s}
+            project={project}
+            mocks={mocks}
+            canReview={canReview}
+            onApprove={() => approveMutation.mutate(s.id)}
+            onReject={() => rejectMutation.mutate(s.id)}
+            busy={busy}
+          />
+        ))}
+      </div>
+    </>
+  );
+}
+
+// ─── Source suggestions timeline ───────────────────────────────────────────
+
+function SourceSuggestionsTimeline({
+  projectId,
+  keyId,
+  project,
+  mocks,
+  canReview,
+}: {
+  projectId: string;
+  keyId: string;
+  project: Project;
+  mocks: Record<string, string>;
+  canReview: boolean;
+}) {
+  const queryClient = useQueryClient();
+
+  const { data: suggestions, isLoading } = useQuery({
+    queryKey: ["sourceSuggestions", keyId],
+    queryFn: () => api.sourceSuggestions(projectId, keyId),
+  });
+
+  const approveMutation = useMutation({
+    mutationFn: (id: string) => api.approveSourceSuggestion(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["sourceSuggestions", keyId] });
+      queryClient.invalidateQueries({ queryKey: ["keys"] });
+    },
+  });
+
+  const rejectMutation = useMutation({
+    mutationFn: (id: string) => api.rejectSourceSuggestion(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["sourceSuggestions", keyId] });
+      queryClient.invalidateQueries({ queryKey: ["keys"] });
     },
   });
 

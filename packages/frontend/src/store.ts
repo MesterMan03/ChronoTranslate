@@ -35,6 +35,7 @@ type MockStore = {
   mocks: Record<string, string>;
   setMock: (keyId: string, argName: string, value: string) => void;
   getMocks: (keyId: string) => Record<string, string>;
+  clearMocks: (keyId: string, argNames: string[]) => void;
 };
 
 export const useMockStore = create<MockStore>()(
@@ -54,6 +55,14 @@ export const useMockStore = create<MockStore>()(
           }
         }
         return result;
+      },
+      clearMocks: (keyId, argNames) => {
+        const keys = new Set(argNames.map((n) => `${keyId}:${n}`));
+        set((s) => {
+          const mocks = { ...s.mocks };
+          for (const k of keys) delete mocks[k];
+          return { mocks };
+        });
       },
     }),
     { name: "chronotranslate-mocks" }

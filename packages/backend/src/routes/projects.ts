@@ -1,13 +1,15 @@
 import type { FastifyInstance } from "fastify";
-import { db } from "../db/index.ts";
+import { db } from "../db";
 import {
   projects,
   locales,
   translationFiles,
   translationKeys,
   translations,
+  sourceSuggestions,
   comments,
   users,
+  projectBans,
 } from "../db/schema.ts";
 import { eq, and, count, ne, inArray, sql } from "drizzle-orm";
 import { requireAuth, requireRole } from "../lib/auth.ts";
@@ -91,7 +93,7 @@ export async function projectRoutes(app: FastifyInstance) {
   app.get<{
     Params: { id: string; fileId: string };
     Querystring: { locale?: string };
-  }>("/projects/:id/files/:fileId/keys", async (req, reply) => {
+  }>("/projects/:id/files/:fileId/keys", async (req, _) => {
     const { fileId } = req.params;
     const { locale } = req.query;
 
@@ -101,6 +103,30 @@ export async function projectRoutes(app: FastifyInstance) {
       .where(eq(translationKeys.fileId, fileId));
 
     if (!locale) return keys;
+
+    // Source locale: populate pendingCount from source suggestions
+    const [project] = await db
+      .select({ sourceLocale: projects.sourceLocale })
+      .from(projects)
+      .where(eq(projects.id, req.params.id))
+      .limit(1);
+
+    if (project && locale === project.sourceLocale) {
+      const keyIds = keys.map((k) => k.id);
+      if (keyIds.length === 0) return keys;
+      const pendingCounts = await db
+        .select({ keyId: sourceSuggestions.keyId, n: count() })
+        .from(sourceSuggestions)
+        .where(
+          and(
+            eq(sourceSuggestions.status, "pending"),
+            inArray(sourceSuggestions.keyId, keyIds)
+          )
+        )
+        .groupBy(sourceSuggestions.keyId);
+      const pendingMap = new Map(pendingCounts.map((p) => [p.keyId, Number(p.n)]));
+      return keys.map((k) => ({ ...k, pendingCount: pendingMap.get(k.id) ?? 0 }));
+    }
 
     const [localeRecord] = await db
       .select()
@@ -220,6 +246,13 @@ export async function projectRoutes(app: FastifyInstance) {
     if (typeof value !== "string" || value.trim() === "")
       return reply.code(400).send({ error: "value is required" });
 
+    const [ban] = await db
+      .select()
+      .from(projectBans)
+      .where(and(eq(projectBans.projectId, projectId), eq(projectBans.userId, payload.id)))
+      .limit(1);
+    if (ban) return reply.code(403).send({ error: "You are banned from this project" });
+
     const [localeRecord] = await db
       .select()
       .from(locales)
@@ -258,6 +291,141 @@ export async function projectRoutes(app: FastifyInstance) {
     await updateLocaleProgress(localeRecord.id, projectId);
     return result;
   });
+
+  // List source suggestions for a key
+  app.get<{
+    Params: { id: string; keyId: string };
+  }>("/projects/:id/keys/:keyId/source-suggestions", async (req, _) => {
+    const { keyId } = req.params;
+    return db
+      .select({
+        id: sourceSuggestions.id,
+        value: sourceSuggestions.value,
+        status: sourceSuggestions.status,
+        submittedAt: sourceSuggestions.submittedAt,
+        reviewedAt: sourceSuggestions.reviewedAt,
+        submitterName: users.username,
+        submitterAvatar: users.avatarUrl,
+      })
+      .from(sourceSuggestions)
+      .leftJoin(users, eq(sourceSuggestions.submittedBy, users.id))
+      .where(eq(sourceSuggestions.keyId, keyId))
+      .orderBy(sourceSuggestions.submittedAt);
+  });
+
+  // Submit a source suggestion (one pending per user per key)
+  app.post<{
+    Params: { id: string; keyId: string };
+    Body: { value: string };
+  }>("/projects/:id/keys/:keyId/source-suggestions", async (req, reply) => {
+    await requireAuth(req, reply);
+    const payload = req.user as { id: string };
+    const { keyId, id: projectId } = req.params;
+    const { value } = req.body;
+
+    if (typeof value !== "string" || value.trim() === "")
+      return reply.code(400).send({ error: "value is required" });
+
+    const [ban] = await db
+      .select()
+      .from(projectBans)
+      .where(and(eq(projectBans.projectId, projectId), eq(projectBans.userId, payload.id)))
+      .limit(1);
+    if (ban) return reply.code(403).send({ error: "You are banned from this project" });
+
+    const [existingPending] = await db
+      .select()
+      .from(sourceSuggestions)
+      .where(
+        and(
+          eq(sourceSuggestions.keyId, keyId),
+          eq(sourceSuggestions.submittedBy, payload.id),
+          eq(sourceSuggestions.status, "pending")
+        )
+      )
+      .limit(1);
+
+    if (existingPending) {
+      const [result] = await db
+        .update(sourceSuggestions)
+        .set({ value, submittedAt: new Date() })
+        .where(eq(sourceSuggestions.id, existingPending.id))
+        .returning();
+      return result;
+    }
+
+    const [result] = await db
+      .insert(sourceSuggestions)
+      .values({ keyId, value, submittedBy: payload.id })
+      .returning();
+    return result;
+  });
+
+  // Approve a source suggestion (reviewer+) — updates sourceValue
+  app.post<{ Params: { suggestionId: string } }>(
+    "/source-suggestions/:suggestionId/approve",
+    async (req, reply) => {
+      const actor = await requireRole(req, reply, "reviewer");
+      const { suggestionId } = req.params;
+
+      const [suggestion] = await db
+        .select()
+        .from(sourceSuggestions)
+        .where(eq(sourceSuggestions.id, suggestionId))
+        .limit(1);
+      if (!suggestion) return reply.code(404).send({ error: "Suggestion not found" });
+      if (suggestion.status !== "pending")
+        return reply.code(400).send({ error: "Only pending suggestions can be approved" });
+
+      await db
+        .update(sourceSuggestions)
+        .set({ status: "superseded" })
+        .where(
+          and(
+            eq(sourceSuggestions.keyId, suggestion.keyId),
+            eq(sourceSuggestions.status, "approved")
+          )
+        );
+
+      const [approved] = await db
+        .update(sourceSuggestions)
+        .set({ status: "approved", reviewedBy: actor.id, reviewedAt: new Date() })
+        .where(eq(sourceSuggestions.id, suggestionId))
+        .returning();
+
+      await db
+        .update(translationKeys)
+        .set({ sourceValue: approved.value })
+        .where(eq(translationKeys.id, suggestion.keyId));
+
+      return approved;
+    }
+  );
+
+  // Reject a source suggestion (reviewer+)
+  app.post<{ Params: { suggestionId: string } }>(
+    "/source-suggestions/:suggestionId/reject",
+    async (req, reply) => {
+      const actor = await requireRole(req, reply, "reviewer");
+      const { suggestionId } = req.params;
+
+      const [suggestion] = await db
+        .select()
+        .from(sourceSuggestions)
+        .where(eq(sourceSuggestions.id, suggestionId))
+        .limit(1);
+      if (!suggestion) return reply.code(404).send({ error: "Suggestion not found" });
+      if (suggestion.status !== "pending")
+        return reply.code(400).send({ error: "Only pending suggestions can be rejected" });
+
+      const [rejected] = await db
+        .update(sourceSuggestions)
+        .set({ status: "rejected", reviewedBy: actor.id, reviewedAt: new Date() })
+        .where(eq(sourceSuggestions.id, suggestionId))
+        .returning();
+      return rejected;
+    }
+  );
 
   // Approve a suggestion by ID (reviewer+)
   app.post<{ Params: { suggestionId: string } }>(
@@ -396,6 +564,13 @@ export async function projectRoutes(app: FastifyInstance) {
 
     if (!locale) return reply.code(400).send({ error: "locale query param required" });
     if (!req.body.content?.trim()) return reply.code(400).send({ error: "content is required" });
+
+    const [ban] = await db
+      .select()
+      .from(projectBans)
+      .where(and(eq(projectBans.projectId, projectId), eq(projectBans.userId, payload.id)))
+      .limit(1);
+    if (ban) return reply.code(403).send({ error: "You are banned from this project" });
 
     const [localeRecord] = await db
       .select()

@@ -5,8 +5,6 @@ import { useAuthStore } from "../store.ts";
 import type { Role, User, CustomTag } from "../types.ts";
 import { MiniMessagePreview } from "../components/MiniMessagePreview.tsx";
 
-const ROLE_ORDER: Role[] = ["translator", "reviewer", "admin", "superadmin"];
-
 const ROLE_BADGE: Record<Role, string> = {
   translator: "bg-white/5 text-white/40 border-white/10",
   reviewer: "bg-blue-500/20 text-blue-400 border-blue-500/30",
@@ -112,6 +110,7 @@ function ProjectsSection({ me, queryClient }: { me: User; queryClient: ReturnTyp
   const [showAddLocale, setShowAddLocale] = useState<string | null>(null);
   const [showImport, setShowImport] = useState<string | null>(null);
   const [showTags, setShowTags] = useState<string | null>(null);
+  const [showBans, setShowBans] = useState<string | null>(null);
 
   const createMutation = useMutation({
     mutationFn: (body: { name: string; sourceLocale: string; githubOwner?: string; githubRepo?: string }) =>
@@ -197,6 +196,12 @@ function ProjectsSection({ me, queryClient }: { me: User; queryClient: ReturnTyp
               >
                 Tags
               </button>
+              <button
+                onClick={() => setShowBans(showBans === p.id ? null : p.id)}
+                className="text-xs bg-white/5 hover:bg-white/10 border border-white/10 px-2 py-1 rounded"
+              >
+                Bans
+              </button>
             </div>
 
             {/* Locale progress */}
@@ -255,6 +260,15 @@ function ProjectsSection({ me, queryClient }: { me: User; queryClient: ReturnTyp
                 initialTags={p.customTags}
                 onClose={() => setShowTags(null)}
                 onSaved={() => queryClient.invalidateQueries({ queryKey: ["adminProjects"] })}
+              />
+            )}
+
+            {/* Ban manager */}
+            {showBans === p.id && (
+              <BanEditor
+                projectId={p.id}
+                me={me}
+                onClose={() => setShowBans(null)}
               />
             )}
           </div>
@@ -513,6 +527,21 @@ function CustomTagsEditor({
                   )}
                 </div>
                 <button
+                  onClick={() =>
+                    setTags((prev) =>
+                      prev.map((x) => x.name === t.name ? { ...x, nonMockable: !x.nonMockable } : x)
+                    )
+                  }
+                  title={t.nonMockable ? "Built-in (not mockable) — click to allow mocking" : "Allow mocking — click to mark as built-in"}
+                  className={`text-xs px-1.5 py-0.5 rounded border shrink-0 transition-colors ${
+                    t.nonMockable
+                      ? "bg-amber-500/20 text-amber-400 border-amber-500/30 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/30"
+                      : "bg-white/5 text-white/20 border-white/10 hover:bg-amber-500/10 hover:text-amber-400 hover:border-amber-500/20"
+                  }`}
+                >
+                  built-in
+                </button>
+                <button
                   onClick={() => setTags((prev) => prev.filter((x) => x.name !== t.name))}
                   className="text-white/20 hover:text-red-400 text-sm shrink-0 ml-1"
                 >
@@ -582,6 +611,108 @@ function CustomTagsEditor({
           Cancel
         </button>
       </div>
+    </div>
+  );
+}
+
+function BanEditor({
+  projectId,
+  me,
+  onClose,
+}: {
+  projectId: string;
+  me: User;
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+
+  const { data: allUsers } = useQuery({
+    queryKey: ["adminUsers"],
+    queryFn: () => api.adminUsers(),
+  });
+
+  const { data: bans, isLoading } = useQuery({
+    queryKey: ["projectBans", projectId],
+    queryFn: () => api.projectBans(projectId),
+  });
+
+  const banMutation = useMutation({
+    mutationFn: (userId: string) => api.banUser(projectId, userId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["projectBans", projectId] }),
+  });
+
+  const unbanMutation = useMutation({
+    mutationFn: (userId: string) => api.unbanUser(projectId, userId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["projectBans", projectId] }),
+  });
+
+  const bannedIds = new Set(bans?.map((b) => b.userId) ?? []);
+
+  // Only show users the current admin can actually ban
+  const bannable = (allUsers ?? []).filter((u) => {
+    if (u.id === me.id) return false;
+    if (u.role === "superadmin") return false;
+    return !(me.role !== "superadmin" && u.role === "admin");
+  });
+
+  return (
+    <div className="mt-3 border-t border-white/10 pt-3">
+      <div className="text-xs text-white/40 mb-3 uppercase tracking-wider">
+        Project bans
+        <span className="ml-2 normal-case text-white/20 font-normal">
+          — banned users cannot submit translations or comments
+        </span>
+      </div>
+
+      {isLoading && <div className="text-xs text-white/30">Loading…</div>}
+
+      {bannable.length === 0 && !isLoading && (
+        <p className="text-xs text-white/20">No bannable users.</p>
+      )}
+
+      {bannable.length > 0 && (
+        <div className="space-y-1 mb-3">
+          {bannable.map((u) => {
+            const isBanned = bannedIds.has(u.id);
+            const busy = banMutation.isPending || unbanMutation.isPending;
+            return (
+              <div key={u.id} className="flex items-center gap-3 px-3 py-2 bg-white/5 border border-white/10 rounded">
+                {u.avatarUrl ? (
+                  <img src={u.avatarUrl} alt="" className="w-6 h-6 rounded-full shrink-0" />
+                ) : (
+                  <div className="w-6 h-6 rounded-full bg-white/10 shrink-0" />
+                )}
+                <span className="text-sm flex-1 min-w-0 truncate">{u.username}</span>
+                <span className={`text-xs px-1.5 py-0.5 rounded border shrink-0 ${ROLE_BADGE[u.role as Role]}`}>
+                  {u.role}
+                </span>
+                {isBanned && (
+                  <span className="text-xs text-red-400 border border-red-500/30 bg-red-500/10 px-1.5 py-0.5 rounded shrink-0">
+                    banned
+                  </span>
+                )}
+                <button
+                  onClick={() =>
+                    isBanned ? unbanMutation.mutate(u.id) : banMutation.mutate(u.id)
+                  }
+                  disabled={busy}
+                  className={`text-xs px-2 py-1 rounded border disabled:opacity-40 transition-colors shrink-0 ${
+                    isBanned
+                      ? "bg-white/5 text-white/40 border-white/10 hover:bg-white/10"
+                      : "bg-red-500/20 text-red-400 border-red-500/30 hover:bg-red-500/30"
+                  }`}
+                >
+                  {isBanned ? "Unban" : "Ban"}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <button onClick={onClose} className="text-sm bg-white/5 hover:bg-white/10 px-4 py-1.5 rounded">
+        Close
+      </button>
     </div>
   );
 }
