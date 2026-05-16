@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+@theme {
+  --color-mc-dark: #1a1a2e;
+  --color-mc-panel: #16213e;
+  --color-mc-border: #0f3460;
+  --color-mc-accent: #e94560;
+}
+
+body {
+  background-color: #0d1117;
+  color: #c9d1d9;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Minecraft-style font for previews */
+.mc-preview {
+  font-family: "Courier New", monospace;
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
